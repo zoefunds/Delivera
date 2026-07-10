@@ -1,22 +1,27 @@
-app = "delivera-api"
-primary_region = "iad"
+# fly.toml app configuration file generated for delivera-api on 2026-07-10T20:33:48+01:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'delivera-api'
+primary_region = 'iad'
 
 [build]
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 1
 
-[[http_service.checks]]
-  interval = "30s"
-  timeout = "5s"
-  grace_period = "20s"
-  method = "GET"
-  path = "/health"
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '20s'
+    method = 'GET'
+    path = '/health'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = 'shared-cpu-1x'
+  memory = '512mb'
