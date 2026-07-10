@@ -1,0 +1,321 @@
+// Delivera — PostgreSQL schema (see docs/DATABASE.md)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CLIENT
+  PROVIDER
+  BOTH
+  ADMIN
+}
+
+enum ContractStatus {
+  DRAFT
+  FUNDED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum MilestoneStatus {
+  PENDING
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  NEEDS_REVISION
+  REJECTED
+  EXHAUSTED
+}
+
+enum TokenPurpose {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  passwordHash    String
+  name            String
+  role            UserRole  @default(BOTH)
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  wallet          Wallet?
+  sessions        Session[]
+  emailTokens     EmailToken[]
+  projects        Project[]
+  clientContracts   Contract[] @relation("client")
+  providerContracts Contract[] @relation("provider")
+  deliverables    Deliverable[]
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+  transactions    Transaction[]
+  attachments     Attachment[]
+  reviewsGiven    Review[]   @relation("reviewer")
+  reviewsReceived Review[]   @relation("reviewee")
+  apiKeys         ApiKey[]
+  disputesRaised  Dispute[]
+}
+
+model Wallet {
+  id                  String    @id @default(uuid())
+  userId              String    @unique
+  address             String    @unique
+  encryptedPrivateKey String
+  kdfSalt             String
+  iv                  String
+  authTag             String
+  exportedAt          DateTime?
+  createdAt           DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  ip        String?
+  userAgent String?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model EmailToken {
+  id        String       @id @default(uuid())
+  userId    String
+  tokenHash String       @unique
+  purpose   TokenPurpose
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  ownerId     String
+  title       String
+  description String   @default("")
+  status      String   @default("OPEN")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contracts Contract[]
+
+  @@index([ownerId])
+}
+
+model Contract {
+  id              String         @id @default(uuid())
+  chainContractId String?        @unique
+  projectId       String?
+  clientId        String
+  providerId      String?
+  providerEmail   String?
+  title           String
+  description     String         @default("")
+  status          ContractStatus @default(DRAFT)
+  totalAtto       Decimal        @default(0) @db.Decimal(78, 0)
+  fundedAtto      Decimal        @default(0) @db.Decimal(78, 0)
+  releasedAtto    Decimal        @default(0) @db.Decimal(78, 0)
+  refundedAtto    Decimal        @default(0) @db.Decimal(78, 0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  client       User          @relation("client", fields: [clientId], references: [id], onDelete: Restrict)
+  provider     User?         @relation("provider", fields: [providerId], references: [id], onDelete: Restrict)
+  milestones   Milestone[]
+  disputes     Dispute[]
+  transactions Transaction[]
+  reviews      Review[]
+
+  @@index([clientId])
+  @@index([providerId])
+  @@index([status])
+}
+
+model Milestone {
+  id                 String          @id @default(uuid())
+  contractId         String
+  index              Int
+  title              String
+  description        String          @default("")
+  acceptanceCriteria String
+  evidenceType       String          @default("other")
+  amountAtto         Decimal         @db.Decimal(78, 0)
+  status             MilestoneStatus @default(PENDING)
+  attempts           Int             @default(0)
+  maxAttempts        Int             @default(3)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  contract     Contract      @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  deliverables Deliverable[]
+  attachments  Attachment[]
+
+  @@unique([contractId, index])
+}
+
+model Deliverable {
+  id           String   @id @default(uuid())
+  milestoneId  String
+  submitterId  String
+  evidenceUrls Json
+  notes        String   @default("")
+  attempt      Int
+  createdAt    DateTime @default(now())
+
+  milestone   Milestone      @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  submitter   User           @relation(fields: [submitterId], references: [id], onDelete: Restrict)
+  evaluations AiEvaluation[]
+
+  @@index([milestoneId])
+}
+
+model AiEvaluation {
+  id             String   @id @default(uuid())
+  deliverableId  String
+  verdict        String
+  score          Int
+  criteriaMet    Json?
+  reasoning      String   @default("")
+  consensusRound Int      @default(1)
+  txHash         String?
+  createdAt      DateTime @default(now())
+
+  deliverable Deliverable @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+
+  @@index([deliverableId])
+}
+
+model Dispute {
+  id                String    @id @default(uuid())
+  contractId        String
+  chainDisputeIndex Int?
+  milestoneIndex    Int
+  raisedById        String
+  reason            String
+  clientStatement   String    @default("")
+  providerStatement String    @default("")
+  status            String    @default("OPEN")
+  providerBps       Int?
+  resolutionSummary String?
+  resolvedAt        DateTime?
+  createdAt         DateTime  @default(now())
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  raisedBy User     @relation(fields: [raisedById], references: [id], onDelete: Restrict)
+
+  @@index([contractId])
+}
+
+model Transaction {
+  id         String   @id @default(uuid())
+  userId     String
+  contractId String?
+  kind       String
+  txHash     String?
+  status     String   @default("PENDING")
+  payload    Json?
+  createdAt  DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  contract Contract? @relation(fields: [contractId], references: [id], onDelete: SetNull)
+
+  @@index([txHash])
+  @@index([userId])
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  contractId String
+  reviewerId String
+  revieweeId String
+  rating     Int
+  comment    String   @default("")
+  createdAt  DateTime @default(now())
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  reviewer User     @relation("reviewer", fields: [reviewerId], references: [id], onDelete: Cascade)
+  reviewee User     @relation("reviewee", fields: [revieweeId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, reviewerId])
+}
+
+model Attachment {
+  id          String   @id @default(uuid())
+  ownerId     String
+  milestoneId String?
+  s3Key       String
+  filename    String
+  mime        String
+  size        Int
+  createdAt   DateTime @default(now())
+
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  milestone Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId])
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  body      String    @default("")
+  readAt    DateTime?
+  emailedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  ip        String?
+  userAgent String?
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+}
+
+model ApiKey {
+  id         String    @id @default(uuid())
+  userId     String
+  keyHash    String    @unique
+  label      String
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
