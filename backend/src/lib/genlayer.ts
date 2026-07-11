@@ -26,6 +26,24 @@ export async function readContract(method: string, args: unknown[]): Promise<unk
   });
 }
 
+/** GenVM wraps a method's return value as { raw, status, payload: { raw, readable } }
+ *  where `readable` is a JSON-encoded string of the actual return value. Decode it back
+ *  to a plain JS value (string/number/etc). Falls back to the raw wrapper if the shape
+ *  doesn't match what we expect. */
+function decodeGenvmResult(raw: unknown): unknown {
+  if (raw == null || typeof raw === "string" || typeof raw === "number") return raw;
+  const obj = raw as Record<string, unknown>;
+  const payload = obj.payload as Record<string, unknown> | undefined;
+  if (obj.status === "return" && typeof payload?.readable === "string") {
+    try {
+      return JSON.parse(payload.readable);
+    } catch {
+      return payload.readable;
+    }
+  }
+  return raw;
+}
+
 export async function writeContract(
   privateKey: string,
   method: string,
@@ -49,15 +67,23 @@ export async function writeContract(
   // Surface the contract method's return value; receipt shape varies by
   // genlayer-js version, so probe the known locations defensively.
   const consensusData = receipt?.consensus_data as Record<string, unknown> | undefined;
-  const leaderReceipt = (consensusData?.leader_receipt ?? {}) as Record<string, unknown>;
-  const rawResult =
-    (receipt?.result as unknown) ??
-    (leaderReceipt?.result as unknown) ??
-    (Array.isArray(leaderReceipt) ? (leaderReceipt[0] as Record<string, unknown>)?.result : undefined);
+  const leaderReceiptRaw = consensusData?.leader_receipt;
+  const leaderReceipt = (
+    Array.isArray(leaderReceiptRaw) ? leaderReceiptRaw[0] : leaderReceiptRaw
+  ) as Record<string, unknown> | undefined;
+  // NB: top-level receipt.result is a consensus vote code (e.g. 6 = MAJORITY_AGREE),
+  // not the contract's return value — the actual payload only lives on the leader receipt.
+  const rawResult = leaderReceipt?.result as unknown;
+
+  if (leaderReceipt?.execution_result === "ERROR") {
+    const stderr = (leaderReceipt?.genvm_result as Record<string, unknown> | undefined)?.stderr;
+    logger.error({ method, txHash, stderr }, "genlayer contract execution error");
+    throw new Error(`Contract method ${method} failed on-chain: ${String(stderr ?? "unknown error").slice(-500)}`);
+  }
 
   return {
     txHash: String(txHash),
     status: String(receipt?.status_name ?? receipt?.status ?? "UNKNOWN"),
-    result: rawResult,
+    result: decodeGenvmResult(rawResult),
   };
 }

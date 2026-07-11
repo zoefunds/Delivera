@@ -200,7 +200,7 @@ class DeliveraEscrow(gl.Contract):
 
     def _index_append(self, index: TreeMap, key: str, contract_id: str) -> None:
         if key not in index:
-            index[key] = DynArray[str]()
+            index[key] = []
         index[key].append(contract_id)
 
     def _clip(self, text: str, limit: int = MAX_TEXT_LEN) -> str:
@@ -610,9 +610,9 @@ Return ONLY a JSON object:
             funded_atto=u256(0),
             released_atto=u256(0),
             refunded_atto=u256(0),
-            milestones_json=DynArray[str](),
-            evaluations_json=DynArray[str](),
-            disputes_json=DynArray[str](),
+            milestones_json=[],
+            evaluations_json=[],
+            disputes_json=[],
             created_seq=seq,
             updated_seq=seq,
         )

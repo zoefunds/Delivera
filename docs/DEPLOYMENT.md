@@ -57,12 +57,12 @@ Then update `APP_URL`/`CORS_ORIGINS` Fly secrets with the final Vercel domain an
 
 ## 4. Wire the contract address
 
-Deployed contract on StudioNet: `0xa6f7F1d08D319AC62aD45222B5B324cAC9cDf1dA`
+Deployed contract on StudioNet: `0x43a9a6a1Aaf96e2F5845919704ce034f789A19c4`
 
 Whenever the contract is (re)deployed:
 
 ```bash
-fly secrets set --app delivera-api GENLAYER_CONTRACT_ADDRESS="0xa6f7F1d08D319AC62aD45222B5B324cAC9cDf1dA"
+fly secrets set --app delivera-api GENLAYER_CONTRACT_ADDRESS="0x43a9a6a1Aaf96e2F5845919704ce034f789A19c4"
 ```
 
 Fly restarts the app automatically. `/health` shows `chain: configured`.

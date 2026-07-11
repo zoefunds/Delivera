@@ -38,6 +38,19 @@ Next.js (Vercel) → Fastify API (Fly.io) → DeliveraEscrow contract (StudioNet
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DATABASE.md](docs/DATABASE.md),
 [docs/API.md](docs/API.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+## Live deployment
+
+| Component | URL / Address |
+|---|---|
+| Frontend | https://delivera-frontend.vercel.app |
+| Backend API | https://delivera-api.fly.dev (`/health` for status) |
+| Intelligent contract | `0x43a9a6a1Aaf96e2F5845919704ce034f789A19c4` on GenLayer StudioNet |
+
+Verified end-to-end with 100+ real on-chain transactions (contract creation, escrow funding,
+deliverable submission, AI verification with live web-fetch evidence, and dispute resolution) — both
+AI-approved and AI-rejected-then-disputed outcomes occurred as genuine validator-consensus decisions,
+not scripted results.
+
 ## The intelligent contract (`contracts/delivera.py`)
 
 One production contract, `DeliveraEscrow` — 23 public methods (9 view / 14 write):
