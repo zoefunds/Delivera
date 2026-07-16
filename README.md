@@ -54,10 +54,14 @@ every validator, not just accepted from what the provider claims.
 | Backend API | https://delivera-api.fly.dev (`/health` for status) |
 | Intelligent contract | `0x59dd0167C9d1bC10549B5E0Af41BB43Bf016090f` on GenLayer StudioNet |
 
-Verified end-to-end with 100+ real on-chain transactions (contract creation, escrow funding,
-deliverable submission, AI verification with live web-fetch evidence, and dispute resolution) — both
-AI-approved and AI-rejected-then-disputed outcomes occurred as genuine validator-consensus decisions,
-not scripted results.
+The escrow/verification/dispute lifecycle (contract creation, funding, deliverable submission, AI
+verification with live web-fetch evidence, dispute resolution) was verified end-to-end with 100+ real
+on-chain transactions against a prior deployment of this same contract logic — both AI-approved and
+AI-rejected-then-disputed outcomes occurred as genuine validator-consensus decisions, not scripted
+results. The current address adds real GEN value transfer on `deposit`/`withdraw` in place of the
+earlier accounting-only balances; that specific path was verified directly (a fresh wallet's real GEN
+deposit and withdrawal round-trip, balances matching exactly) before this address went live — see
+[Known gotchas](#known-gotchas--lessons-from-getting-this-on-chain).
 
 ## Architecture
 
