@@ -195,6 +195,7 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
       args: (chainId: string) => unknown[];
       kind: string;
       after?: (result: unknown) => Promise<void>;
+      waitFor?: "ACCEPTED" | "FINALIZED";
     },
   ) {
     if (!requireChain(reply)) return;
@@ -209,7 +210,9 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(409).send({ error: { code: "NOT_ON_CHAIN", message: "Contract has no chain id" } });
     }
     const key = await userKey(req.user!.id);
-    const tx = await writeContract(key.privateKey, opts.method, opts.args(contract.chainContractId));
+    const tx = await writeContract(key.privateKey, opts.method, opts.args(contract.chainContractId), {
+      waitFor: opts.waitFor,
+    });
     await recordTx(req, contract.id, opts.kind, tx);
     await invalidate(`chain:${contract.chainContractId}`);
     if (opts.after) await opts.after(tx.result);
@@ -393,12 +396,18 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- funds ----------------------------------------------------------
+  // Both endpoints move real GEN — `deposit` is a payable call (the attached
+  // value credits the caller's ledger entry), `withdraw` triggers the
+  // contract's emit_transfer back to the caller. Withdraw waits for
+  // FINALIZED, not just ACCEPTED, since that's when the transfer actually
+  // lands on-chain (see genlayer.ts).
   app.post("/:id/withdraw", { preHandler: [writeLimit] }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const { amountAtto } = z.object({ amountAtto: z.string().regex(/^\d+$/) }).parse(req.body);
     return chainAction(req, reply, id, {
       allow: "both", method: "withdraw", kind: "withdraw",
       args: () => [amountAtto],
+      waitFor: "FINALIZED",
     });
   });
 
@@ -406,7 +415,7 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
     if (!requireChain(reply)) return;
     const { amountAtto } = z.object({ amountAtto: z.string().regex(/^\d+$/) }).parse(req.body);
     const key = await userKey(req.user!.id);
-    const tx = await writeContract(key.privateKey, "deposit", [amountAtto]);
+    const tx = await writeContract(key.privateKey, "deposit", [], { valueAtto: BigInt(amountAtto) });
     await recordTx(req, null, "deposit", tx, { amountAtto });
     return { txHash: tx.txHash, status: tx.status };
   });

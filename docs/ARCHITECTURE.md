@@ -52,7 +52,8 @@ Boundary (per GenLayer guidance):
 ## Escrow Flow
 
 1. Client creates contract on-chain: milestones, atto-scale amounts, acceptance criteria, evidence type.
-2. Client funds escrow (StudioNet: simulated GEN via contract-tracked balances funded by `fund_escrow`).
+2. Client `deposit`s real GEN (payable call, credited via `gl.message.value`) into their ledger entry,
+   then `fund_escrow` locks it against this contract.
 3. Provider accepts → contract ACTIVE.
 4. Provider submits deliverable: evidence URL(s) + notes per milestone.
 5. Contract runs AI verification (leader + validators independently fetch evidence and evaluate) → APPROVED / REJECTED / NEEDS_REVISION.

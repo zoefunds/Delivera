@@ -48,19 +48,26 @@ export async function writeContract(
   privateKey: string,
   method: string,
   args: unknown[],
+  opts: { valueAtto?: bigint; waitFor?: "ACCEPTED" | "FINALIZED" } = {},
 ): Promise<{ txHash: string; status: string; result?: unknown }> {
   const client = clientFor(privateKey);
   const txHash = await client.writeContract({
     address: config.GENLAYER_CONTRACT_ADDRESS as Address,
     functionName: method,
     args: args as CalldataEncodable[],
-    value: 0n,
+    value: opts.valueAtto ?? 0n,
   });
-  logger.info({ method, txHash }, "genlayer tx submitted");
+  logger.info({ method, txHash, value: opts.valueAtto?.toString() }, "genlayer tx submitted");
+  // Real GEN transfers (emit_transfer, e.g. in `withdraw`) only land once the
+  // transaction reaches FINALIZED — ACCEPTED just means consensus was reached
+  // on the state change, not that the appeal window has closed. FINALIZED
+  // takes noticeably longer; only wait for it where the caller needs the
+  // payout to have actually arrived.
+  const waitFor = (opts.waitFor ?? "ACCEPTED") as TransactionStatus;
   const receipt = (await client.waitForTransactionReceipt({
     hash: txHash,
-    status: "ACCEPTED" as TransactionStatus,
-    retries: 40,
+    status: waitFor,
+    retries: waitFor === "FINALIZED" ? 200 : 40,
     interval: 3000,
   })) as Record<string, unknown>;
 

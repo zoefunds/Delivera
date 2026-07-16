@@ -5,6 +5,20 @@ from genlayer import *
 
 import json
 import re
+
+
+# ---------------------------------------------------------------------------
+# EVM interop — used to send real GEN out of the contract's own balance via
+# emit_transfer(). No methods are called on the recipient; this is a plain
+# native-value transfer to an EOA or another contract.
+# ---------------------------------------------------------------------------
+@gl.evm.contract_interface
+class _Payee:
+    class View:
+        pass
+
+    class Write:
+        pass
 from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
@@ -497,17 +511,17 @@ Return ONLY a JSON object:
     # PUBLIC WRITE METHODS — funding & ledger
     # ==================================================================
 
-    @gl.public.write
-    def deposit(self, atto_amount: str) -> None:
-        """Credit the sender's internal balance.
+    @gl.public.write.payable
+    def deposit(self) -> None:
+        """Credit the sender's internal balance with the real GEN attached to this call.
 
-        StudioNet is gasless and has no real token bridge, so the escrow uses
-        an internal atto-scale ledger: `deposit` credits spendable balance,
-        `fund_escrow` locks it, settlement moves it, `withdraw` debits it.
-        On a value-bearing network this method is where gl.message.value
-        would be credited instead.
+        The contract's own GEN balance (`self.balance`) is the actual custody of
+        every client's funds; `self.balances` is the entitlement ledger against
+        that pooled balance — who is owed how much, and (once `fund_escrow`
+        locks it) which contract that entitlement is earmarked to. `withdraw`
+        is the only place real GEN leaves the contract again, via emit_transfer.
         """
-        amount = self._parse_atto(atto_amount)
+        amount = int(gl.message.value)
         self._require(amount > 0, "Deposit must be positive")
         sender = self._sender()
         self._credit(sender, amount)
@@ -516,12 +530,19 @@ Return ONLY a JSON object:
 
     @gl.public.write
     def withdraw(self, atto_amount: str) -> None:
-        """Withdraw from the sender's spendable balance (earnings or unspent deposits)."""
+        """Withdraw from the sender's spendable balance (earnings or unspent deposits).
+
+        Debits the internal ledger first (so a reentrant call can never double
+        spend), then sends the real GEN to the caller via emit_transfer. The
+        transfer only lands once this transaction reaches FINALIZED, not just
+        ACCEPTED — callers polling for the payout should wait for that status.
+        """
         amount = self._parse_atto(atto_amount)
         self._require(amount > 0, "Withdrawal must be positive")
         sender = self._sender()
         self._debit(sender, amount)
         self.withdrawals_total = u256(int(self.withdrawals_total) + amount)
+        _Payee(Address(sender)).emit_transfer(value=u256(amount))
         self._next_seq()
 
     def _parse_atto(self, atto_amount: str) -> int:

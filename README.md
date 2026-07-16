@@ -52,7 +52,7 @@ every validator, not just accepted from what the provider claims.
 |---|---|
 | Frontend | https://delivera-frontend.vercel.app |
 | Backend API | https://delivera-api.fly.dev (`/health` for status) |
-| Intelligent contract | `0x43a9a6a1Aaf96e2F5845919704ce034f789A19c4` on GenLayer StudioNet |
+| Intelligent contract | `0x59dd0167C9d1bC10549B5E0Af41BB43Bf016090f` on GenLayer StudioNet |
 
 Verified end-to-end with 100+ real on-chain transactions (contract creation, escrow funding,
 deliverable submission, AI verification with live web-fetch evidence, and dispute resolution) — both
@@ -106,9 +106,12 @@ Full documents: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/DATABASE.m
 One production contract, `DeliveraEscrow` — 23 public methods (9 view / 14 write), deployed with a
 pinned GenVM runner hash so its schema never silently drifts.
 
-- **Escrow ledger** — atto-scale (`value × 10^18`) `u256` internal balances, since StudioNet is
-  gasless and has no real value-bearing bridge: `deposit` credits a client's spendable balance,
-  `fund_escrow` locks it against a contract, `withdraw` debits a released balance back out.
+- **Escrow ledger, backed by real GEN** — `deposit` is a payable method: the client's real GEN
+  (atto-scale, `value × 10^18`) is transferred into the contract's own on-chain balance and credited
+  to their spendable entry in an internal `u256` ledger. `fund_escrow` locks that entry against a
+  specific contract; settlement moves entries between client/provider as milestones resolve; `withdraw`
+  debits the ledger and calls `emit_transfer` to send real GEN back out to the caller's wallet — the
+  contract's GEN balance is genuine custody, not a simulated number.
 - **Lifecycle** — `create_contract` (milestones + acceptance criteria + evidence type per milestone),
   `accept_contract`, `cancel_contract`, all behind a strict state-machine (`DRAFT → FUNDED → ACTIVE →
   COMPLETED/CANCELLED/DISPUTED`).
@@ -135,7 +138,8 @@ Lint: `genvm-lint check contracts/delivera.py` → passes.
 
 1. Client calls `create_contract` — milestones, atto-scale amounts, acceptance criteria, evidence
    type — creating the on-chain record (mirrored in Postgres for fast listing).
-2. Client `deposit`s into their internal ledger, then `fund_escrow` locks the full contract amount.
+2. Client `deposit`s real GEN (a payable call) into their ledger entry, then `fund_escrow` locks the
+   full contract amount against this contract.
 3. Provider `accept_contract` → contract goes `ACTIVE`.
 4. Provider `submit_deliverable`: one or more evidence URLs + notes, per milestone.
 5. Either party (or the platform, on their behalf) triggers `verify_deliverable`. Validators
@@ -277,8 +281,18 @@ re-discovered the hard way:
   The actual decoded return value is nested at
   `receipt.consensus_data.leader_receipt[0].result.payload.readable` as a JSON-encoded string —
   decode it explicitly (see `decodeGenvmResult` in `backend/src/lib/genlayer.ts`).
-- **StudioNet has no value-bearing bridge.** Escrow funding works off an internal atto-scale ledger:
-  clients must `deposit` before `fund_escrow` can debit their balance — there's no real GEN transfer.
+- **Real value transfer works, but only lands at `FINALIZED`, not `ACCEPTED`.** `deposit` is
+  `@gl.public.write.payable` and genuinely receives `gl.message.value`; `withdraw` genuinely sends GEN
+  back out via `emit_transfer` from a `@gl.evm.contract_interface` stub (the pattern in GenLayer's own
+  `faucet.py` example). Verified directly: a fresh 0-GEN wallet deposited real GEN, the contract's
+  on-chain balance rose by that exact amount, and `withdraw` moved it back to the wallet's real
+  balance. The catch — `ACCEPTED` only means validator consensus was reached on the state change; the
+  `emit_transfer` payload doesn't actually execute until the transaction reaches `FINALIZED` (past the
+  appeal window), which takes noticeably longer. `withdraw` calls wait for `FINALIZED` specifically;
+  the rest of the lifecycle only needs `ACCEPTED`. (A related, StudioNet-specific gotcha: on some other
+  GenLayer testnets `gl.message.value` is documented to always read `0` even though the EVM-layer
+  transfer still happens — that bug does **not** reproduce on StudioNet, confirmed by direct probe
+  before relying on it here.)
   Gasless also means a fresh wallet with a 0 GEN balance is normal and needs no funding.
   All-transaction sequences that run for a while should expect the 15-minute access token to expire
   mid-run and handle re-authentication, and treat an occasional 500 from a chain-write endpoint as
