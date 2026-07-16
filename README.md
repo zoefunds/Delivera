@@ -52,16 +52,15 @@ every validator, not just accepted from what the provider claims.
 |---|---|
 | Frontend | https://delivera-frontend.vercel.app |
 | Backend API | https://delivera-api.fly.dev (`/health` for status) |
-| Intelligent contract | `0x59dd0167C9d1bC10549B5E0Af41BB43Bf016090f` on GenLayer StudioNet |
+| Intelligent contract | `0xed80FF974287075c8dd4E9524598D7940dceBb5F` on GenLayer StudioNet |
 
-The escrow/verification/dispute lifecycle (contract creation, funding, deliverable submission, AI
-verification with live web-fetch evidence, dispute resolution) was verified end-to-end with 100+ real
-on-chain transactions against a prior deployment of this same contract logic — both AI-approved and
-AI-rejected-then-disputed outcomes occurred as genuine validator-consensus decisions, not scripted
-results. The current address adds real GEN value transfer on `deposit`/`withdraw` in place of the
-earlier accounting-only balances; that specific path was verified directly (a fresh wallet's real GEN
-deposit and withdrawal round-trip, balances matching exactly) before this address went live — see
-[Known gotchas](#known-gotchas--lessons-from-getting-this-on-chain).
+Verified directly against this exact address with 20 real on-chain transactions covering every write
+method: contract creation, real GEN deposit, escrow funding, acceptance, AI-approved and
+AI-rejected-then-disputed milestones (arbitration re-fetched the evidence and split 0%/100% based on
+what it actually found), manual client approval without AI, pre-funding cancellation, and two real GEN
+withdrawals confirmed at `FINALIZED`. An earlier deployment of the same contract logic was separately
+run through 100+ transactions to validate the lifecycle at volume. See
+[Known gotchas](#known-gotchas--lessons-from-getting-this-on-chain) for the value-transfer details.
 
 ## Architecture
 
