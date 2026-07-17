@@ -3,28 +3,144 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Delivera "Architectural Trust" design system — light values, "R G B". */
+    --color-surface: 252 248 255;
+    --color-surface-dim: 220 216 229;
+    --color-surface-bright: 252 248 255;
+    --color-surface-alt: 248 250 252;
+    --color-surface-container-lowest: 255 255 255;
+    --color-surface-container-low: 245 242 255;
+    --color-surface-container: 240 236 249;
+    --color-surface-container-high: 234 230 244;
+    --color-surface-container-highest: 228 225 238;
+    --color-on-surface: 27 27 36;
+    --color-on-surface-variant: 70 69 85;
+    --color-outline: 119 117 135;
+    --color-outline-variant: 199 196 216;
+    --color-border-subtle: 226 232 240;
+    --color-background: 252 248 255;
+    --color-on-background: 27 27 36;
+
+    --color-primary: 53 37 205;
+    --color-on-primary: 255 255 255;
+    --color-primary-container: 79 70 229;
+    --color-on-primary-container: 218 215 255;
+    --color-primary-fixed: 226 223 255;
+    --color-on-primary-fixed-variant: 51 35 204;
+
+    --color-secondary: 86 94 116;
+    --color-on-secondary: 255 255 255;
+    --color-secondary-container: 218 226 253;
+    --color-on-secondary-container: 92 100 122;
+
+    --color-tertiary: 126 48 0;
+    --color-on-tertiary: 255 255 255;
+    --color-tertiary-container: 164 65 0;
+    --color-on-tertiary-container: 255 210 190;
+    --color-tertiary-fixed: 255 219 204;
+    --color-on-tertiary-fixed-variant: 123 47 0;
+
+    --color-error: 186 26 26;
+    --color-on-error: 255 255 255;
+    --color-error-container: 255 218 214;
+    --color-on-error-container: 147 0 10;
+
+    --color-success-emerald: 16 185 129;
+    --color-action-violet: 99 102 241;
+  }
+
+  .dark {
+    --color-surface: 22 20 31;
+    --color-surface-dim: 15 13 22;
+    --color-surface-bright: 38 35 51;
+    --color-surface-alt: 28 26 38;
+    --color-surface-container-lowest: 16 14 24;
+    --color-surface-container-low: 28 26 38;
+    --color-surface-container: 33 31 45;
+    --color-surface-container-high: 43 40 54;
+    --color-surface-container-highest: 53 50 63;
+    --color-on-surface: 232 230 240;
+    --color-on-surface-variant: 201 199 214;
+    --color-outline: 143 140 160;
+    --color-outline-variant: 72 70 90;
+    --color-border-subtle: 55 52 70;
+    --color-background: 22 20 31;
+    --color-on-background: 232 230 240;
+
+    --color-primary: 165 159 255;
+    --color-on-primary: 20 10 90;
+    --color-primary-container: 68 58 173;
+    --color-on-primary-container: 224 221 255;
+    --color-primary-fixed: 68 58 173;
+    --color-on-primary-fixed-variant: 224 221 255;
+
+    --color-secondary: 190 198 224;
+    --color-on-secondary: 40 46 64;
+    --color-secondary-container: 63 70 92;
+    --color-on-secondary-container: 218 226 253;
+
+    --color-tertiary: 255 182 149;
+    --color-on-tertiary: 84 24 0;
+    --color-tertiary-container: 123 47 0;
+    --color-on-tertiary-container: 255 219 204;
+    --color-tertiary-fixed: 84 46 22;
+    --color-on-tertiary-fixed-variant: 255 182 149;
+
+    --color-error: 255 180 171;
+    --color-on-error: 105 0 5;
+    --color-error-container: 96 20 20;
+    --color-on-error-container: 255 218 214;
+
+    --color-success-emerald: 52 211 153;
+    --color-action-violet: 129 140 248;
+  }
+
   body {
-    @apply bg-white text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+    @apply bg-surface text-on-surface antialiased;
   }
 }
 
 @layer components {
+  /* Material Symbols Outlined — loaded via <link> in layout.tsx */
+  .material-symbols-outlined {
+    font-variation-settings:
+      "FILL" 0,
+      "wght" 400,
+      "GRAD" 0,
+      "opsz" 24;
+    font-size: 1.25rem;
+    line-height: 1;
+    vertical-align: middle;
+  }
+
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-bold text-on-primary shadow-sm transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold transition hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-border-subtle bg-transparent px-5 py-2.5 text-sm font-bold text-on-surface transition-all hover:bg-surface-container-low active:scale-[0.98];
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-on-surface-variant transition-all hover:bg-surface-container-low hover:text-primary active:scale-[0.98];
   }
   .card {
-    @apply rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900;
+    @apply rounded-xl border border-border-subtle bg-surface-container-lowest p-6 shadow-sm transition-colors;
+  }
+  .glass-card {
+    @apply rounded-xl border border-border-subtle bg-surface-container-lowest/70 p-6 shadow-sm backdrop-blur-md transition-colors;
   }
   .input {
-    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-900;
+    @apply w-full rounded-lg border border-border-subtle bg-surface-container-low px-4 py-3 text-sm text-on-surface outline-none transition placeholder:text-outline/60 focus:border-primary focus:ring-2 focus:ring-primary/20;
   }
   .label {
-    @apply mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300;
+    @apply mb-1.5 block font-mono text-label-mono uppercase tracking-wide text-on-surface-variant;
   }
   .badge {
-    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold;
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide;
+  }
+
+  /* Step index chip used in "How it works" / wizard steppers, e.g. 01, 02 */
+  .step-chip {
+    @apply font-mono text-label-mono text-primary;
   }
 }

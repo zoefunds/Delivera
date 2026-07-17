@@ -1,9 +1,9 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
+import { AuthShell } from "@/components/AuthShell";
 
 function ResetForm() {
   const router = useRouter();
@@ -27,28 +27,31 @@ function ResetForm() {
   }
 
   return (
-    <form onSubmit={submit} className="mt-6 space-y-4">
+    <form onSubmit={submit} className="space-y-5">
       <div>
-        <label className="label" htmlFor="password">New password (min 10 characters)</label>
+        <label className="label" htmlFor="password">
+          New password (min 10 characters)
+        </label>
         <input className="input" id="password" name="password" type="password" required minLength={10} />
       </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <button className="btn-primary w-full" disabled={busy || !token}>
+      {error && <p className="text-sm font-medium text-error">{error}</p>}
+      <button className="btn-primary w-full py-3.5 text-base" disabled={busy || !token}>
         {busy ? "Saving…" : "Set new password"}
       </button>
-      {!token && <p className="text-sm text-red-600">Missing reset token — use the link from your email.</p>}
+      {!token && (
+        <p className="text-sm font-medium text-error">Missing reset token — use the link from your email.</p>
+      )}
     </form>
   );
 }
 
 export default function ResetPasswordPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="card w-full max-w-md">
-        <Link href="/" className="text-lg font-bold text-brand-600">Delivera</Link>
-        <h1 className="mt-4 text-2xl font-bold">Choose a new password</h1>
-        <Suspense><ResetForm /></Suspense>
-      </div>
-    </main>
+    <AuthShell>
+      <h2 className="mb-8 font-headline text-headline-lg text-on-surface">Choose a new password</h2>
+      <Suspense>
+        <ResetForm />
+      </Suspense>
+    </AuthShell>
   );
 }

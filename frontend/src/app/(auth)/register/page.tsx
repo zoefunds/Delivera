@@ -4,6 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, setAccessToken, ApiError } from "@/lib/api";
+import { AuthShell } from "@/components/AuthShell";
+import { Icon } from "@/components/Icon";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -32,39 +34,78 @@ export default function RegisterPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="card w-full max-w-md">
-        <Link href="/" className="text-lg font-bold text-brand-600">Delivera</Link>
-        <h1 className="mt-4 text-2xl font-bold">Create your account</h1>
-        <p className="mt-1 text-sm text-slate-500">A GenLayer wallet is created for you automatically.</p>
-        <form onSubmit={submit} className="mt-6 space-y-4">
-          <div>
-            <label className="label" htmlFor="name">Full name</label>
-            <input className="input" id="name" name="name" required maxLength={120} />
-          </div>
-          <div>
-            <label className="label" htmlFor="email">Email</label>
-            <input className="input" id="email" name="email" type="email" required autoComplete="email" />
-          </div>
-          <div>
-            <label className="label" htmlFor="password">Password (min 10 characters)</label>
-            <input className="input" id="password" name="password" type="password" required minLength={10} autoComplete="new-password" />
-          </div>
-          <div>
-            <label className="label" htmlFor="role">I mainly want to</label>
-            <select className="input" id="role" name="role" defaultValue="BOTH">
-              <option value="CLIENT">Hire (client)</option>
-              <option value="PROVIDER">Work (provider)</option>
-              <option value="BOTH">Both</option>
-            </select>
-          </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <button className="btn-primary w-full" disabled={busy}>{busy ? "Creating…" : "Create account"}</button>
-        </form>
-        <p className="mt-4 text-sm">
-          Already have an account? <Link href="/login" className="text-brand-600 hover:underline">Sign in</Link>
-        </p>
-      </div>
-    </main>
+    <AuthShell>
+      <h2 className="mb-2 font-headline text-headline-lg text-on-surface">Create your account</h2>
+      <p className="mb-8 text-on-surface-variant">
+        Join Delivera and start transacting with architectural trust.
+      </p>
+      <form onSubmit={submit} className="space-y-5">
+        <div>
+          <label className="label" htmlFor="name">
+            Full name
+          </label>
+          <input className="input" id="name" name="name" required maxLength={120} placeholder="e.g. Satoshi Nakamoto" />
+        </div>
+        <div>
+          <label className="label" htmlFor="email">
+            Email
+          </label>
+          <input
+            className="input"
+            id="email"
+            name="email"
+            type="email"
+            required
+            autoComplete="email"
+            placeholder="name@company.com"
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="password">
+            Password (min 10 characters)
+          </label>
+          <input
+            className="input"
+            id="password"
+            name="password"
+            type="password"
+            required
+            minLength={10}
+            autoComplete="new-password"
+            placeholder="••••••••••••"
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="role">
+            I mainly want to
+          </label>
+          <select className="input" id="role" name="role" defaultValue="BOTH">
+            <option value="CLIENT">Hire (client)</option>
+            <option value="PROVIDER">Work (provider)</option>
+            <option value="BOTH">Both</option>
+          </select>
+        </div>
+
+        <div className="flex items-start gap-3 rounded-lg border border-primary/10 bg-surface-container p-4 dark:border-white/10 dark:bg-white/5">
+          <Icon name="account_balance_wallet" className="mt-0.5 text-primary" filled />
+          <p className="text-sm text-on-surface-variant">
+            <strong className="text-on-surface">Automatic wallet creation.</strong> By signing up, a custodial
+            GenLayer wallet is provisioned to secure your escrowed funds.
+          </p>
+        </div>
+
+        {error && <p className="text-sm font-medium text-error">{error}</p>}
+        <button className="btn-primary w-full py-3.5 text-base" disabled={busy}>
+          {busy ? "Creating…" : "Get started"}
+          {!busy && <Icon name="arrow_forward" />}
+        </button>
+      </form>
+      <p className="mt-6 text-center text-sm text-on-surface-variant">
+        Already have an account?{" "}
+        <Link href="/login" className="font-semibold text-primary hover:underline">
+          Sign in
+        </Link>
+      </p>
+    </AuthShell>
   );
 }

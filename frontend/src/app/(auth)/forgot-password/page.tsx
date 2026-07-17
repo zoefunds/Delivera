@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { AuthShell } from "@/components/AuthShell";
 
 export default function ForgotPasswordPage() {
   const [sent, setSent] = useState(false);
@@ -21,27 +22,33 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="card w-full max-w-md">
-        <Link href="/" className="text-lg font-bold text-brand-600">Delivera</Link>
-        <h1 className="mt-4 text-2xl font-bold">Reset your password</h1>
-        {sent ? (
-          <p className="mt-4 text-sm text-slate-600 dark:text-slate-400">
-            If that email is registered, a reset link is on its way. Check your inbox (and spam folder).
-          </p>
-        ) : (
-          <form onSubmit={submit} className="mt-6 space-y-4">
+    <AuthShell>
+      <h2 className="mb-2 font-headline text-headline-lg text-on-surface">Reset your password</h2>
+      {sent ? (
+        <p className="mt-4 text-sm leading-relaxed text-on-surface-variant">
+          If that email is registered, a reset link is on its way. Check your inbox (and spam folder).
+        </p>
+      ) : (
+        <>
+          <p className="mb-8 text-on-surface-variant">We&apos;ll email you a link to set a new password.</p>
+          <form onSubmit={submit} className="space-y-5">
             <div>
-              <label className="label" htmlFor="email">Email</label>
+              <label className="label" htmlFor="email">
+                Email
+              </label>
               <input className="input" id="email" name="email" type="email" required />
             </div>
-            <button className="btn-primary w-full" disabled={busy}>{busy ? "Sending…" : "Send reset link"}</button>
+            <button className="btn-primary w-full py-3.5 text-base" disabled={busy}>
+              {busy ? "Sending…" : "Send reset link"}
+            </button>
           </form>
-        )}
-        <p className="mt-4 text-sm">
-          <Link href="/login" className="text-brand-600 hover:underline">Back to sign in</Link>
-        </p>
-      </div>
-    </main>
+        </>
+      )}
+      <p className="mt-6 text-center text-sm">
+        <Link href="/login" className="font-semibold text-primary hover:underline">
+          Back to sign in
+        </Link>
+      </p>
+    </AuthShell>
   );
 }

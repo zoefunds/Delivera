@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useState } from "react";
 import { api, formatGen, ApiError } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Icon } from "@/components/Icon";
 
 interface Milestone {
   id: string; index: number; title: string; description: string;
@@ -54,7 +55,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     }
   }
 
-  if (!contract) return <p className="text-sm text-slate-500">{error || "Loading…"}</p>;
+  if (!contract) return <p className="text-sm text-on-surface-variant">{error || "Loading…"}</p>;
   const isClient = me?.id === contract.clientId;
   const isProvider = me?.id === contract.providerId;
   const chainStatus = contract.chain?.status ?? contract.status;
@@ -63,38 +64,52 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     <div className="mx-auto max-w-4xl">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">{contract.title}</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {formatGen(contract.totalAtto)} total · you are the {isClient ? "client" : isProvider ? "provider" : "viewer"}
+          <h1 className="font-headline text-headline-lg text-on-surface">{contract.title}</h1>
+          <p className="mt-1 text-on-surface-variant">
+            {formatGen(contract.totalAtto)} total · you are the{" "}
+            {isClient ? "client" : isProvider ? "provider" : "viewer"}
           </p>
         </div>
         <StatusBadge status={chainStatus} />
       </div>
-      {contract.description && <p className="mt-4 text-sm text-slate-600 dark:text-slate-400">{contract.description}</p>}
-      {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">{error}</p>}
+      {contract.description && <p className="mt-4 text-on-surface-variant">{contract.description}</p>}
+      {error && (
+        <p className="mt-4 rounded-lg bg-error-container p-3 text-sm font-medium text-on-error-container">
+          {error}
+        </p>
+      )}
 
       {/* Lifecycle actions */}
       <div className="mt-6 flex flex-wrap gap-3">
         {isClient && chainStatus === "DRAFT" && (
           <button className="btn-primary" disabled={!!busyAction} onClick={() => run("fund", `/contracts/${id}/fund`)}>
+            <Icon name="lock" />
             {busyAction === "fund" ? "Funding…" : "Fund escrow"}
           </button>
         )}
         {isProvider && chainStatus === "FUNDED" && (
           <button className="btn-primary" disabled={!!busyAction} onClick={() => run("accept", `/contracts/${id}/accept`)}>
+            <Icon name="check_circle" />
             {busyAction === "accept" ? "Accepting…" : "Accept contract"}
           </button>
         )}
         {(isClient || isProvider) && ["DRAFT", "FUNDED", "ACTIVE"].includes(chainStatus) && (
-          <button className="btn-secondary" disabled={!!busyAction}
-            onClick={() => confirm("Cancel this contract? Remaining escrow returns to the client.") && run("cancel", `/contracts/${id}/cancel`)}>
+          <button
+            className="btn-secondary"
+            disabled={!!busyAction}
+            onClick={() =>
+              confirm("Cancel this contract? Remaining escrow returns to the client.") &&
+              run("cancel", `/contracts/${id}/cancel`)
+            }
+          >
+            <Icon name="cancel" />
             Cancel contract
           </button>
         )}
       </div>
 
       {/* Milestones */}
-      <h2 className="mt-10 text-lg font-semibold">Milestones</h2>
+      <h2 className="mt-10 font-headline text-headline-md text-on-surface">Milestones</h2>
       <div className="mt-4 space-y-4">
         {contract.milestones.sort((a, b) => a.index - b.index).map((m) => {
           const chainM = contract.chain?.milestones?.[m.index];
@@ -103,19 +118,26 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           return (
             <div key={m.id} className="card">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="font-semibold">{m.index + 1}. {m.title}</h3>
+                <h3 className="font-semibold text-on-surface">
+                  {m.index + 1}. {m.title}
+                </h3>
                 <div className="flex items-center gap-3">
-                  <span className="text-sm text-slate-500">{formatGen(m.amountAtto)}</span>
+                  <span className="text-sm text-on-surface-variant">{formatGen(m.amountAtto)}</span>
                   <StatusBadge status={status} />
                 </div>
               </div>
-              <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-400">{m.acceptanceCriteria}</p>
-              <p className="mt-2 text-xs text-slate-400">Evidence: {m.evidenceType} · attempt {m.attempts}/{m.maxAttempts}</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-on-surface-variant">{m.acceptanceCriteria}</p>
+              <p className="mt-2 font-mono text-xs text-outline">
+                Evidence: {m.evidenceType} · attempt {m.attempts}/{m.maxAttempts}
+              </p>
 
               {evaluation && (
-                <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm dark:bg-slate-800/60">
-                  <p className="font-medium">AI verdict: {evaluation.verdict} (score {evaluation.score})</p>
-                  <p className="mt-1 text-slate-600 dark:text-slate-400">{evaluation.reasoning}</p>
+                <div className="mt-3 rounded-lg bg-surface-container-low p-4 text-sm dark:bg-white/5">
+                  <p className="flex items-center gap-2 font-semibold text-on-surface">
+                    <Icon name="psychology" className="!text-base text-primary" />
+                    AI verdict: {evaluation.verdict} (score {evaluation.score})
+                  </p>
+                  <p className="mt-1 text-on-surface-variant">{evaluation.reasoning}</p>
                 </div>
               )}
 
@@ -126,12 +148,14 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                 {(isClient || isProvider) && status === "SUBMITTED" && (
                   <button className="btn-primary" disabled={!!busyAction}
                     onClick={() => run(`verify-${m.index}`, `/contracts/${id}/milestones/${m.index}/verify`)}>
+                    <Icon name="psychology" />
                     {busyAction === `verify-${m.index}` ? "Validators evaluating… (may take a minute)" : "Run AI verification"}
                   </button>
                 )}
                 {isClient && ["SUBMITTED", "NEEDS_REVISION", "REJECTED", "EXHAUSTED"].includes(status) && (
                   <button className="btn-secondary" disabled={!!busyAction}
                     onClick={() => run(`approve-${m.index}`, `/contracts/${id}/milestones/${m.index}/approve`)}>
+                    <Icon name="task_alt" />
                     Approve manually
                   </button>
                 )}
@@ -141,6 +165,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                       const reason = prompt("Why are you disputing this milestone?");
                       if (reason && reason.length >= 10) run(`dispute-${m.index}`, `/contracts/${id}/disputes`, { milestoneIndex: m.index, reason });
                     }}>
+                    <Icon name="gavel" />
                     Raise dispute
                   </button>
                 )}
@@ -153,15 +178,15 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       {/* Disputes */}
       {contract.disputes.length > 0 && (
         <>
-          <h2 className="mt-10 text-lg font-semibold">Disputes</h2>
+          <h2 className="mt-10 font-headline text-headline-md text-on-surface">Disputes</h2>
           <div className="mt-4 space-y-4">
             {contract.disputes.map((d) => (
               <div key={d.id} className="card">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Milestone {d.milestoneIndex + 1}</h3>
+                  <h3 className="font-semibold text-on-surface">Milestone {d.milestoneIndex + 1}</h3>
                   <StatusBadge status={d.status === "OPEN" ? "DISPUTED" : "COMPLETED"} />
                 </div>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{d.reason}</p>
+                <p className="mt-2 text-sm text-on-surface-variant">{d.reason}</p>
                 {d.status === "OPEN" && d.chainDisputeIndex !== null && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button className="btn-secondary" disabled={!!busyAction}
@@ -169,20 +194,22 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                         const statement = prompt("Add your statement for the arbitrator:");
                         if (statement) run("statement", `/contracts/${id}/disputes/${d.chainDisputeIndex}/statement`, { statement });
                       }}>
+                      <Icon name="chat" />
                       Add statement
                     </button>
                     <button className="btn-primary" disabled={!!busyAction}
                       onClick={() => run("resolve", `/contracts/${id}/disputes/${d.chainDisputeIndex}/resolve`)}>
+                      <Icon name="balance" />
                       {busyAction === "resolve" ? "Arbitrating… (may take a minute)" : "Resolve by AI arbitration"}
                     </button>
                   </div>
                 )}
                 {d.resolutionSummary && (
-                  <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm dark:bg-slate-800/60">
-                    <p className="font-medium">
+                  <div className="mt-3 rounded-lg bg-surface-container-low p-4 text-sm dark:bg-white/5">
+                    <p className="font-semibold text-on-surface">
                       Resolution: {d.providerBps !== null ? `${(d.providerBps / 100).toFixed(1)}% to provider` : "resolved"}
                     </p>
-                    <p className="mt-1 text-slate-600 dark:text-slate-400">{d.resolutionSummary}</p>
+                    <p className="mt-1 text-on-surface-variant">{d.resolutionSummary}</p>
                   </div>
                 )}
               </div>
@@ -199,9 +226,15 @@ function SubmitForm({ onSubmit, busy }: { onSubmit: (urls: string[], notes: stri
   const [urls, setUrls] = useState("");
   const [notes, setNotes] = useState("");
 
-  if (!open) return <button className="btn-primary" onClick={() => setOpen(true)}>Submit deliverable</button>;
+  if (!open)
+    return (
+      <button className="btn-primary" onClick={() => setOpen(true)}>
+        <Icon name="upload_file" />
+        Submit deliverable
+      </button>
+    );
   return (
-    <div className="w-full space-y-3 rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+    <div className="w-full space-y-3 rounded-lg border border-border-subtle p-4 dark:border-white/10">
       <div>
         <label className="label">Evidence URLs (one per line, max 5) — validators fetch these directly</label>
         <textarea className="input" rows={3} value={urls} onChange={(e) => setUrls(e.target.value)}
