@@ -5,10 +5,13 @@ import { api, formatGen, ApiError } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Icon } from "@/components/Icon";
 
+interface Deliverable {
+  id: string; evidenceUrls: string[]; notes: string; attempt: number; createdAt: string;
+}
 interface Milestone {
   id: string; index: number; title: string; description: string;
   acceptanceCriteria: string; evidenceType: string; amountAtto: string;
-  status: string; attempts: number; maxAttempts: number;
+  status: string; attempts: number; maxAttempts: number; deliverables: Deliverable[];
 }
 interface Dispute {
   id: string; chainDisputeIndex: number | null; milestoneIndex: number; reason: string;
@@ -130,6 +133,41 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
               <p className="mt-2 font-mono text-xs text-outline">
                 Evidence: {m.evidenceType} · attempt {m.attempts}/{m.maxAttempts}
               </p>
+
+              {m.deliverables.length > 0 && (
+                <div className="mt-3 space-y-3">
+                  {[...m.deliverables]
+                    .sort((a, b) => b.attempt - a.attempt)
+                    .map((d) => (
+                      <div key={d.id} className="rounded-lg border border-border-subtle p-4">
+                        <div className="flex items-center justify-between">
+                          <p className="flex items-center gap-2 text-sm font-semibold text-on-surface">
+                            <Icon name="upload_file" className="!text-base text-primary" />
+                            Submitted deliverable · attempt {d.attempt}
+                          </p>
+                          <span className="font-mono text-xs text-outline">
+                            {new Date(d.createdAt).toLocaleString()}
+                          </span>
+                        </div>
+                        <ul className="mt-2 space-y-1">
+                          {d.evidenceUrls.map((url) => (
+                            <li key={url}>
+                              <a
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="break-all text-sm text-primary hover:underline"
+                              >
+                                {url}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                        {d.notes && <p className="mt-2 text-sm text-on-surface-variant">{d.notes}</p>}
+                      </div>
+                    ))}
+                </div>
+              )}
 
               {evaluation && (
                 <div className="mt-3 rounded-lg bg-surface-container-low p-4 text-sm dark:bg-white/5">

@@ -77,7 +77,10 @@ async function notify(userId: string, type: string, title: string, body: string,
 }
 
 async function loadParty(req: FastifyRequest, id: string) {
-  const contract = await prisma.contract.findUnique({ where: { id }, include: { milestones: true } });
+  const contract = await prisma.contract.findUnique({
+    where: { id },
+    include: { milestones: { include: { deliverables: { orderBy: { attempt: "asc" } } }, orderBy: { index: "asc" } } },
+  });
   if (!contract) return { contract: null, isClient: false, isProvider: false };
   const isClient = contract.clientId === req.user!.id;
   const isProvider = contract.providerId === req.user!.id;
