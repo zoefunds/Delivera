@@ -254,6 +254,9 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
     return chainAction(req, reply, id, {
       allow: "both", method: "cancel_contract", kind: "cancel_contract",
       args: (cid) => [cid],
+      // Cancelling a funded contract refunds the client's real GEN directly
+      // (see cancel_contract in the contract) — wait for the transfer to land.
+      waitFor: "FINALIZED",
       after: async () => {
         await prisma.contract.update({ where: { id }, data: { status: "CANCELLED" } });
       },
@@ -298,6 +301,9 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
     return chainAction(req, reply, id, {
       allow: "both", method: "verify_deliverable", kind: "verify_deliverable",
       args: (cid) => [cid, index],
+      // An "approved" verdict pays the provider real GEN directly — wait for
+      // FINALIZED so the API only reports success once the transfer landed.
+      waitFor: "FINALIZED",
       after: async (result) => {
         const verdict = typeof result === "string" ? result : "unknown";
         const statusMap: Record<string, string> = {
@@ -330,6 +336,8 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
     return chainAction(req, reply, id, {
       allow: "client", method: "approve_milestone", kind: "approve_milestone",
       args: (cid) => [cid, index],
+      // Pays the provider real GEN directly — wait for FINALIZED.
+      waitFor: "FINALIZED",
       after: async () => {
         const m = await prisma.milestone.update({
           where: { contractId_index: { contractId: id, index } },
@@ -381,6 +389,8 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
     return chainAction(req, reply, id, {
       allow: "both", method: "resolve_dispute", kind: "resolve_dispute",
       args: (cid) => [cid, disputeIndex],
+      // Splits real GEN directly to both parties — wait for FINALIZED.
+      waitFor: "FINALIZED",
       after: async (result) => {
         let resolution: { provider_bps?: number; summary?: string } = {};
         try { resolution = JSON.parse(String(result)); } catch { /* keep empty */ }

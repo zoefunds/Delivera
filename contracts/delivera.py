@@ -13,12 +13,28 @@ import re
 # native-value transfer to an EOA or another contract.
 # ---------------------------------------------------------------------------
 @gl.evm.contract_interface
-class _Payee:
+class _Recipient:
     class View:
         pass
 
     class Write:
         pass
+
+
+def _send_gen(to_address: str, amount: u256) -> None:
+    """The single emission choke point — every real GEN payout in this
+    contract funnels through here. Callers MUST zero/update their ledger
+    fields and persist state BEFORE calling this (checks-effects-interactions):
+    if the external transfer happened first, a reentrant call could observe
+    the still-nonzero ledger and drain the same balance twice.
+    """
+    if not to_address:
+        raise gl.vm.UserError(f"{ERROR_EXPECTED} Missing recipient address")
+    if amount <= u256(0):
+        raise gl.vm.UserError(f"{ERROR_EXPECTED} Transfer amount must be positive")
+    _Recipient(Address(to_address)).emit_transfer(value=amount)
+
+
 from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
@@ -130,7 +146,7 @@ class DeliveraEscrow(gl.Contract):
     action_seq: u256                        # global monotonic action counter
     contracts: TreeMap[str, WorkContract]   # contract id -> record
     contract_ids: DynArray[str]             # insertion-ordered ids
-    balances: TreeMap[str, u256]            # address -> withdrawable atto balance
+    balances: TreeMap[str, u256]            # address -> un-earmarked deposited atto (pre-fund_escrow only)
     deposits_total: u256                    # cumulative deposited
     withdrawals_total: u256                 # cumulative withdrawn
     escrow_locked_total: u256               # currently locked across all contracts
@@ -513,13 +529,17 @@ Return ONLY a JSON object:
 
     @gl.public.write.payable
     def deposit(self) -> None:
-        """Credit the sender's internal balance with the real GEN attached to this call.
+        """Credit the sender's un-earmarked balance with the real GEN attached
+        to this call, as pre-funding staging before `fund_escrow` locks it into
+        a specific contract.
 
-        The contract's own GEN balance (`self.balance`) is the actual custody of
-        every client's funds; `self.balances` is the entitlement ledger against
-        that pooled balance — who is owed how much, and (once `fund_escrow`
-        locks it) which contract that entitlement is earmarked to. `withdraw`
-        is the only place real GEN leaves the contract again, via emit_transfer.
+        `self.balances` only ever holds funds that are NOT yet locked into any
+        contract's escrow — once a milestone settles, a dispute resolves, or a
+        contract is cancelled/completes, the real GEN goes straight to the
+        recipient's wallet via `_send_gen` (see `_settle_milestone`,
+        `resolve_dispute`, `cancel_contract`, `_maybe_complete`), not back into
+        this ledger. `withdraw` exists only to reclaim balance that was
+        deposited but never locked into a contract.
         """
         amount = int(gl.message.value)
         self._require(amount > 0, "Deposit must be positive")
@@ -530,20 +550,23 @@ Return ONLY a JSON object:
 
     @gl.public.write
     def withdraw(self, atto_amount: str) -> None:
-        """Withdraw from the sender's spendable balance (earnings or unspent deposits).
+        """Withdraw un-earmarked deposited balance (funds never locked into a
+        contract, or reclaimed after a cancellation/refund credited here).
 
-        Debits the internal ledger first (so a reentrant call can never double
-        spend), then sends the real GEN to the caller via emit_transfer. The
-        transfer only lands once this transaction reaches FINALIZED, not just
-        ACCEPTED — callers polling for the payout should wait for that status.
+        Debits the ledger and persists state BEFORE the external transfer
+        (checks-effects-interactions) — a reentrant call always finds the
+        balance already at its post-withdrawal value, so it can never drain
+        the same balance twice. The transfer only lands once this transaction
+        reaches FINALIZED, not just ACCEPTED — callers polling for the payout
+        should wait for that status.
         """
         amount = self._parse_atto(atto_amount)
         self._require(amount > 0, "Withdrawal must be positive")
         sender = self._sender()
         self._debit(sender, amount)
         self.withdrawals_total = u256(int(self.withdrawals_total) + amount)
-        _Payee(Address(sender)).emit_transfer(value=u256(amount))
         self._next_seq()
+        _send_gen(sender, u256(amount))
 
     def _parse_atto(self, atto_amount: str) -> int:
         """Parse a decimal-string atto amount (u256-scale ints do not fit JSON)."""
@@ -697,10 +720,12 @@ Return ONLY a JSON object:
                           "Work already submitted or paid — raise a dispute instead")
         remaining = int(wc.funded_atto) - int(wc.released_atto) - int(wc.refunded_atto)
         if remaining > 0:
-            self._credit(wc.client, remaining)
+            # Zero the ledger and persist BEFORE the external transfer.
             wc.refunded_atto = u256(int(wc.refunded_atto) + remaining)
             self.escrow_locked_total = u256(int(self.escrow_locked_total) - remaining)
         self._set_status(wc, C_CANCELLED)
+        if remaining > 0:
+            _send_gen(wc.client, u256(remaining))
 
     # ==================================================================
     # PUBLIC WRITE METHODS — deliverables
@@ -854,40 +879,53 @@ Return ONLY a JSON object:
         }
 
         if verdict == V_APPROVED:
-            self._settle_milestone(wc, m)
-        elif verdict == V_NEEDS_REVISION:
-            m["status"] = M_NEEDS_REVISION if m["attempts"] < m["max_attempts"] else M_EXHAUSTED
-        else:  # rejected
-            m["status"] = M_REJECTED if m["attempts"] < m["max_attempts"] else M_EXHAUSTED
+            self._settle_milestone(wc, m)  # persists + pays the provider internally
+        else:
+            if verdict == V_NEEDS_REVISION:
+                m["status"] = M_NEEDS_REVISION if m["attempts"] < m["max_attempts"] else M_EXHAUSTED
+            else:  # rejected
+                m["status"] = M_REJECTED if m["attempts"] < m["max_attempts"] else M_EXHAUSTED
+            self._store_milestone(wc, milestone_index, m)
 
-        self._store_milestone(wc, milestone_index, m)
         self._maybe_complete(wc)
         return verdict
 
     def _settle_milestone(self, wc: WorkContract, m: dict) -> None:
-        """Move an approved milestone's amount from escrow to the provider."""
+        """Move an approved milestone's amount from escrow directly to the
+        provider's wallet as real GEN (checks-effects-interactions).
+
+        The ledger fields (`settled_atto`, `released_atto`,
+        `escrow_locked_total`) are updated and the milestone persisted
+        BEFORE the external transfer. A second call for the same milestone
+        always finds `payable == 0` and sends nothing, so a milestone can
+        never be paid out twice.
+        """
         amount = int(m["amount_atto"])
         already = int(m.get("settled_atto", "0"))
         payable = amount - already
+        m["settled_atto"] = str(amount)
+        m["status"] = M_APPROVED
         if payable > 0:
-            self._credit(wc.provider, payable)
             wc.released_atto = u256(int(wc.released_atto) + payable)
             self.escrow_locked_total = u256(int(self.escrow_locked_total) - payable)
-            m["settled_atto"] = str(amount)
-        m["status"] = M_APPROVED
+        self._store_milestone(wc, int(m["index"]), m)
+        if payable > 0:
+            _send_gen(wc.provider, u256(payable))
 
     def _maybe_complete(self, wc: WorkContract) -> None:
         """Complete the contract when every milestone reached a terminal state,
-        refunding whatever escrow was not released."""
+        refunding whatever escrow was not released, as real GEN, directly to
+        the client."""
         milestones = self._load_milestones(wc)
         terminal = (M_APPROVED, M_EXHAUSTED)
         if all(m["status"] in terminal for m in milestones):
             remaining = int(wc.funded_atto) - int(wc.released_atto) - int(wc.refunded_atto)
             if remaining > 0:
-                self._credit(wc.client, remaining)
                 wc.refunded_atto = u256(int(wc.refunded_atto) + remaining)
                 self.escrow_locked_total = u256(int(self.escrow_locked_total) - remaining)
             self._set_status(wc, C_COMPLETED)
+            if remaining > 0:
+                _send_gen(wc.client, u256(remaining))
 
     @gl.public.write
     def approve_milestone(self, contract_id: str, milestone_index: int) -> None:
@@ -908,8 +946,7 @@ Return ONLY a JSON object:
             "verdict": V_APPROVED, "score": 100,
             "reasoning": "Manually approved by client.", "attempt": int(m["attempts"]),
         }
-        self._settle_milestone(wc, m)
-        self._store_milestone(wc, milestone_index, m)
+        self._settle_milestone(wc, m)  # persists + pays the provider internally
         self._maybe_complete(wc)
 
     # ==================================================================
@@ -1052,11 +1089,13 @@ Return ONLY a JSON object:
         provider_share = disputed_amount * bps // BPS_DENOMINATOR
         client_share = disputed_amount - provider_share
 
+        # Ledger fields are updated now, all state is persisted below, and the
+        # actual GEN transfers happen only at the very end of this method
+        # (checks-effects-interactions) — see the two _send_gen calls after
+        # _maybe_complete.
         if provider_share > 0:
-            self._credit(wc.provider, provider_share)
             wc.released_atto = u256(int(wc.released_atto) + provider_share)
         if client_share > 0:
-            self._credit(wc.client, client_share)
             wc.refunded_atto = u256(int(wc.refunded_atto) + client_share)
         if disputed_amount > 0:
             self.escrow_locked_total = u256(int(self.escrow_locked_total) - disputed_amount)
@@ -1088,6 +1127,12 @@ Return ONLY a JSON object:
 
         self._set_status(wc, C_ACTIVE)
         self._maybe_complete(wc)
+
+        # All state above is already persisted — real transfers happen last.
+        if provider_share > 0:
+            _send_gen(wc.provider, u256(provider_share))
+        if client_share > 0:
+            _send_gen(wc.client, u256(client_share))
         return json.dumps(dispute["resolution"], sort_keys=True)
 
     # ==================================================================

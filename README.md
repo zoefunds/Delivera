@@ -42,7 +42,8 @@ every validator, not just accepted from what the provider claims.
 - **Client** — funds escrow, defines milestones + acceptance criteria, can approve manually, dispute,
   or cancel unstarted work.
 - **Provider** (freelancer/agency) — accepts the contract, submits deliverables as evidence URLs,
-  can resubmit after a rejection (bounded retries), withdraws released funds.
+  can resubmit after a rejection (bounded retries), receives GEN directly the moment a milestone
+  settles.
 - **Platform** — never touches funds. It only provides auth, UX, indexing/caching of chain state,
   notifications, and file attachments. Every fund-moving decision happens on the intelligent contract.
 
@@ -52,14 +53,17 @@ every validator, not just accepted from what the provider claims.
 |---|---|
 | Frontend | https://delivera-frontend.vercel.app |
 | Backend API | https://delivera-api.fly.dev (`/health` for status) |
-| Intelligent contract | `0xed80FF974287075c8dd4E9524598D7940dceBb5F` on GenLayer StudioNet |
+| Intelligent contract | `0x1Edb2894d3Cba0148042BCfBdAC6920691967B60` on GenLayer StudioNet |
 
-Verified directly against this exact address with 20 real on-chain transactions covering every write
-method: contract creation, real GEN deposit, escrow funding, acceptance, AI-approved and
-AI-rejected-then-disputed milestones (arbitration re-fetched the evidence and split 0%/100% based on
-what it actually found), manual client approval without AI, pre-funding cancellation, and two real GEN
-withdrawals confirmed at `FINALIZED`. An earlier deployment of the same contract logic was separately
-run through 100+ transactions to validate the lifecycle at volume. See
+Verified directly against this exact address with 30 real on-chain transactions across 5 contracts,
+each exercising a different flow: an AI-approved milestone paid directly to the provider's wallet; an
+AI-rejected milestone disputed and arbitrated (the arbitrator re-fetched the evidence and split 0% to
+the provider / 100% refunded to the client, based on what it actually found); a manually-approved
+milestone with no AI verification at all; a contract cancelled pre-funding (DRAFT); a contract
+cancelled after funding but before acceptance (FUNDED), refunding real GEN directly to the client; and
+a `withdraw` of leftover un-earmarked deposit balance. Every payout landed as a real wallet-balance
+change with no separate release step. Earlier deployments of the same contract logic were separately
+run through 100+ and 20 further transactions to validate the lifecycle at volume. See
 [Known gotchas](#known-gotchas--lessons-from-getting-this-on-chain) for the value-transfer details.
 
 ## Architecture
@@ -109,12 +113,16 @@ Full documents: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/DATABASE.m
 One production contract, `DeliveraEscrow` — 23 public methods (9 view / 14 write), deployed with a
 pinned GenVM runner hash so its schema never silently drifts.
 
-- **Escrow ledger, backed by real GEN** — `deposit` is a payable method: the client's real GEN
-  (atto-scale, `value × 10^18`) is transferred into the contract's own on-chain balance and credited
-  to their spendable entry in an internal `u256` ledger. `fund_escrow` locks that entry against a
-  specific contract; settlement moves entries between client/provider as milestones resolve; `withdraw`
-  debits the ledger and calls `emit_transfer` to send real GEN back out to the caller's wallet — the
-  contract's GEN balance is genuine custody, not a simulated number.
+- **Escrow ledger, backed by real GEN, paid out immediately** — `deposit` is a payable method: the
+  client's real GEN (atto-scale, `value × 10^18`) is transferred into the contract's own on-chain
+  balance and credited to an un-earmarked `u256` ledger entry. `fund_escrow` locks that entry against
+  a specific contract. From there, every exit — milestone settlement, dispute split, cancellation
+  refund, contract-completion refund — pays real GEN **directly to the recipient's wallet** the moment
+  it's earned, through a single emission choke point (`_send_gen`), not into a balance someone has to
+  remember to withdraw. Every payout path follows checks-effects-interactions: ledger fields are zeroed
+  and state persisted *before* the external transfer, so a reentrant call always finds the balance
+  already spent and can never double-pay. `withdraw` still exists, but only to reclaim a deposit that
+  was never locked into any contract.
 - **Lifecycle** — `create_contract` (milestones + acceptance criteria + evidence type per milestone),
   `accept_contract`, `cancel_contract`, all behind a strict state-machine (`DRAFT → FUNDED → ACTIVE →
   COMPLETED/CANCELLED/DISPUTED`).
@@ -285,13 +293,20 @@ re-discovered the hard way:
   `receipt.consensus_data.leader_receipt[0].result.payload.readable` as a JSON-encoded string —
   decode it explicitly (see `decodeGenvmResult` in `backend/src/lib/genlayer.ts`).
 - **Real value transfer works, but only lands at `FINALIZED`, not `ACCEPTED`.** `deposit` is
-  `@gl.public.write.payable` and genuinely receives `gl.message.value`; `withdraw` genuinely sends GEN
-  back out via `emit_transfer` from a `@gl.evm.contract_interface` stub (the pattern in GenLayer's own
-  `faucet.py` example). Verified directly: a fresh 0-GEN wallet deposited real GEN, the contract's
-  on-chain balance rose by that exact amount, and `withdraw` moved it back to the wallet's real
-  balance. The catch — `ACCEPTED` only means validator consensus was reached on the state change; the
-  `emit_transfer` payload doesn't actually execute until the transaction reaches `FINALIZED` (past the
-  appeal window), which takes noticeably longer. `withdraw` calls wait for `FINALIZED` specifically;
+  `@gl.public.write.payable` and genuinely receives `gl.message.value`; every payout path sends GEN
+  back out via `emit_transfer` from a single `@gl.evm.contract_interface` stub, through one emission
+  choke point (`_send_gen`) — the pattern in GenLayer's own `faucet.py` example, and in the ShipBond
+  project's escrow design this contract's payout paths were rebuilt against. Every payout follows
+  checks-effects-interactions: ledger fields are zeroed and state persisted *before* the transfer, so a
+  reentrant call always finds the balance already spent. Verified directly multiple ways: a fresh
+  0-GEN wallet deposited real GEN and the contract's on-chain balance rose by that exact amount; a
+  milestone approval paid the provider's real wallet balance from `0` straight to the milestone amount
+  with no separate withdraw call; a dispute resolution split GEN to both parties' real wallets in one
+  settlement, and a `0` share correctly triggered no transfer at all. The catch — `ACCEPTED` only means
+  validator consensus was reached on the state change; the `emit_transfer` payload doesn't actually
+  execute until the transaction reaches `FINALIZED` (past the appeal window), which takes noticeably
+  longer. Calls that pay out (`withdraw`, milestone settlement, dispute resolution, cancellation)
+  should wait for `FINALIZED` specifically if the caller needs the transfer to have actually landed;
   the rest of the lifecycle only needs `ACCEPTED`. (A related, StudioNet-specific gotcha: on some other
   GenLayer testnets `gl.message.value` is documented to always read `0` even though the EVM-layer
   transfer still happens — that bug does **not** reproduce on StudioNet, confirmed by direct probe
