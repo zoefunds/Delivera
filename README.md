@@ -19,6 +19,7 @@ split settlement. No party — including the platform — can decide payouts alo
 - [Escrow & verification lifecycle](#escrow--verification-lifecycle)
 - [Consensus / AI verification, in detail](#consensus--ai-verification-in-detail)
 - [Wallets](#wallets-custodial)
+- [Frontend](#frontend)
 - [REST API surface](#rest-api-surface)
 - [Data model](#data-model)
 - [Repository layout](#repository-layout)
@@ -26,6 +27,7 @@ split settlement. No party — including the platform — can decide payouts alo
 - [Deployment](#deployment)
 - [Security highlights](#security-highlights)
 - [Known gotchas / lessons from getting this on-chain](#known-gotchas--lessons-from-getting-this-on-chain)
+- [Known limitations](#known-limitations)
 
 ## Why this needs GenLayer
 
@@ -46,6 +48,10 @@ every validator, not just accepted from what the provider claims.
   settles.
 - **Platform** — never touches funds. It only provides auth, UX, indexing/caching of chain state,
   notifications, and file attachments. Every fund-moving decision happens on the intelligent contract.
+
+Contracts are private to their two parties: the list endpoint only ever returns contracts where the
+caller is the client or the provider, and the detail endpoint returns `403 Forbidden` for anyone else
+— a third account can't see a contract by guessing its URL, and it never appears in their list.
 
 ## Live deployment
 
@@ -155,14 +161,20 @@ Lint: `genvm-lint check contracts/delivera.py` → passes.
 4. Provider `submit_deliverable`: one or more evidence URLs + notes, per milestone.
 5. Either party (or the platform, on their behalf) triggers `verify_deliverable`. Validators
    independently fetch the evidence and evaluate it → `APPROVED` / `NEEDS_REVISION` / `REJECTED`.
-6. `APPROVED` settles immediately: the milestone amount moves from escrow to the provider's balance.
+6. `APPROVED` settles immediately: the milestone amount is sent as real GEN **directly to the
+   provider's wallet** — no separate withdraw step.
 7. `NEEDS_REVISION` / `REJECTED` lets the provider resubmit, up to a configured attempt cap, after
-   which the milestone is `EXHAUSTED`.
+   which the milestone is `EXHAUSTED`. Every submission's evidence URLs, notes, and timestamp remain
+   visible on the contract detail page, alongside the AI's reasoning for each verdict — the full
+   history, not just the latest attempt.
 8. Either party can `raise_dispute` on a submitted/approved/rejected/exhausted milestone; each side
    can `add_dispute_statement`; `resolve_dispute` runs consensus AI arbitration over both statements
-   and the original evidence, splitting the disputed amount by basis points.
-9. Once every milestone reaches a terminal state, any unreleased escrow refunds to the client and the
-   contract closes as `COMPLETED`.
+   and the original evidence, splitting the disputed amount by basis points and paying both shares as
+   real GEN directly to each party's wallet in the same transaction.
+9. Once every milestone reaches a terminal state, any unreleased escrow is refunded as real GEN
+   directly to the client's wallet and the contract closes as `COMPLETED`.
+10. Either party can `cancel_contract` before or shortly after funding (see the state-machine guard in
+    the contract); any already-locked escrow refunds to the client the same way, immediately.
 
 ## Consensus / AI verification, in detail
 
@@ -189,6 +201,17 @@ Lint: `genvm-lint check contracts/delivera.py` → passes.
 - Exporting the raw key requires fresh password re-authentication and is audit-logged; it's shown once.
 - Every contract write is signed server-side with the calling user's wallet via `genlayer-js` — the
   user never handles a private key or signs a transaction manually.
+
+## Frontend
+
+Next.js 15 (App Router) + Tailwind, built against an "Architectural Trust" design system: Hanken
+Grotesk/Inter/JetBrains Mono, an indigo primary, Material Symbols icons, and a custom shield-check
+logo/favicon. Every design-system color is a CSS variable that flips under `.dark`, so dark mode
+themes correctly everywhere rather than requiring per-page patches. Pages: landing, auth (login,
+register, forgot/reset password, email verification — a shared split-screen `AuthShell`), dashboard
+(contracts list with live escrow/active/completed stats), the milestone-builder contract wizard, the
+contract detail page (lifecycle actions, full submission history, AI verdicts, disputes), wallet, and
+notifications.
 
 ## REST API surface
 
@@ -270,6 +293,10 @@ Full guide in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Summary:
 4. Whenever the contract is redeployed, update the `GENLAYER_CONTRACT_ADDRESS` secret and `fly deploy`
    again — the backend picks it up on the rolling restart.
 
+`fly.toml` sets `min_machines_running = 1` with `auto_start_machines = true`, so one backend machine is
+always up and Fly auto-starts the second on demand if it's idled down — the API doesn't go down between
+requests.
+
 ## Security highlights
 
 Argon2id passwords · JWT (15 min) + rotating httpOnly refresh tokens · per-user AES-256-GCM wallet
@@ -316,3 +343,11 @@ re-discovered the hard way:
   mid-run and handle re-authentication, and treat an occasional 500 from a chain-write endpoint as
   potentially transient (a validator round where the LLM's output didn't parse cleanly) rather than
   fatal — retrying is the normal recovery path.
+
+## Known limitations
+
+- **No timeout/recovery exit yet.** If a party goes silent mid-milestone (submitted but never
+  verified, or disputed but never resolved), there's currently no forced exit that lets the other
+  party reclaim escrow after a waiting period — `cancel_contract` only covers the pre-work states.
+  GenVM has no deterministic wall-clock time source inside consensus execution, so this needs a
+  proxy (e.g. an action-sequence-based window) rather than real time, and hasn't been built yet.
