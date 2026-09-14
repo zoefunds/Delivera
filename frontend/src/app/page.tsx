@@ -58,8 +58,8 @@ const features = [
   },
   {
     icon: "account_balance_wallet",
-    title: "Zero-friction wallets",
-    body: "Sign up with email and password. Your GenLayer wallet is created automatically, survives any device change, and stays exportable.",
+    title: "Connect and go",
+    body: "No email, no password. Connect your wallet and you're in — it's your account and your funds, never held by Delivera.",
   },
 ];
 
@@ -87,7 +87,7 @@ export default function Landing() {
             <Link href="/login" className="btn-ghost">
               Sign in
             </Link>
-            <Link href="/register" className="btn-primary">
+            <Link href="/login" className="btn-primary">
               Get started
             </Link>
           </div>
@@ -114,7 +114,7 @@ export default function Landing() {
           invoices. No he-said-she-said. No trusted middleman.
         </p>
         <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
-          <Link href="/register" className="btn-primary px-8 py-4 text-base shadow-glow">
+          <Link href="/login" className="btn-primary px-8 py-4 text-base shadow-glow">
             Create a contract
             <Icon name="arrow_forward" />
           </Link>
@@ -200,7 +200,7 @@ export default function Landing() {
             Create your first performance-based contract in minutes.
           </p>
           <Link
-            href="/register"
+            href="/login"
             className="inline-flex items-center gap-2 rounded-xl bg-primary px-8 py-4 text-lg font-bold text-on-primary shadow-glow transition-all hover:-translate-y-0.5"
           >
             Get started free

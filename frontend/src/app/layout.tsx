@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AppKitProvider } from "@/components/AppKitProvider";
 
 export const metadata: Metadata = {
   title: "Delivera — Performance-Based Contracting",
@@ -34,7 +35,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
       </head>
-      <body className="font-sans">{children}</body>
+      <body className="font-sans">
+        <AppKitProvider>{children}</AppKitProvider>
+      </body>
     </html>
   );
 }

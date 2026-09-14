@@ -1,48 +1,67 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, formatGen, ApiError } from "@/lib/api";
+import { Contract, JsonRpcProvider } from "ethers";
+import { useAppKitAccount } from "@reown/appkit/react";
+import { formatUsdc, usdcAddress } from "@/lib/api";
 import { Icon } from "@/components/Icon";
 
-interface WalletInfo { address: string; onchainBalanceAtto: string | null; exportedAt: string | null }
+const ERC20_ABI = ["function balanceOf(address owner) view returns (uint256)"];
+const BASE_SEPOLIA_RPC = "https://sepolia.base.org";
 
 export default function WalletPage() {
-  const [wallet, setWallet] = useState<WalletInfo | null>(null);
-  const [exported, setExported] = useState<{ address: string; privateKey: string } | null>(null);
+  const { address, isConnected } = useAppKitAccount();
+  const [balance, setBalance] = useState<bigint | null>(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api.get<WalletInfo>("/wallet").then(setWallet).catch((e) => setError(String(e.message ?? e)));
-  }, []);
+    if (!isConnected || !address) return;
+    let cancelled = false;
 
-  async function exportKey(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    const form = new FormData(e.currentTarget);
-    try {
-      setExported(await api.post("/wallet/export", { password: form.get("password") }));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Export failed");
-    } finally {
-      setBusy(false);
+    async function loadBalance() {
+      setError("");
+      try {
+        // Always read Base Sepolia directly via its own RPC, never through
+        // the connected wallet — the wallet's *active* chain may not be
+        // Base Sepolia (e.g. still on GenLayer Studio from another tab),
+        // and a plain balanceOf read needs no wallet interaction anyway.
+        const provider = new JsonRpcProvider(BASE_SEPOLIA_RPC);
+        const usdc = new Contract(usdcAddress, ERC20_ABI, provider);
+        const raw: bigint = await usdc.balanceOf(address);
+        if (!cancelled) setBalance(raw);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load balance");
+      }
     }
-  }
+
+    loadBalance();
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, address]);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="font-headline text-headline-lg text-on-surface">Your GenLayer wallet</h1>
+        <h1 className="font-headline text-headline-lg text-on-surface">Your wallet</h1>
         <p className="mt-1 text-on-surface-variant">
-          Created automatically with your account. It survives device changes, cache clears and reinstalls
-          — the encrypted key lives with your account, never in this browser.
+          Connected directly through your browser wallet on Base Sepolia. Delivera never sees or stores
+          your private key.
         </p>
       </div>
 
       {error && <p className="text-sm font-medium text-error">{error}</p>}
 
-      {wallet && (
+      {!isConnected && (
+        <div className="card">
+          <p className="text-on-surface-variant">
+            No wallet connected.{" "}
+            <appkit-button size="md" label="Connect Wallet" />
+          </p>
+        </div>
+      )}
+
+      {isConnected && address && (
         <section className="relative overflow-hidden rounded-2xl bg-primary p-8 text-on-primary shadow-glow">
           <div
             className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-white/10 blur-3xl"
@@ -51,42 +70,20 @@ export default function WalletPage() {
             <div className="mb-8 flex items-center gap-2">
               <Icon name="account_balance_wallet" />
               <span className="font-mono text-label-mono uppercase tracking-widest opacity-80">
-                GenLayer Wallet
+                Base Sepolia · USDC
               </span>
             </div>
-            <p className="mb-1 text-white/70">On-chain spendable balance</p>
-            <h2 className="text-4xl font-bold tracking-tight">{formatGen(wallet.onchainBalanceAtto)}</h2>
+            <p className="mb-1 text-white/70">Wallet balance</p>
+            <h2 className="text-4xl font-bold tracking-tight">
+              {balance === null ? "…" : formatUsdc(balance)}
+            </h2>
             <div className="mt-8">
               <p className="mb-1 text-xs uppercase tracking-wide text-white/60">Address</p>
-              <code className="block break-all rounded-lg bg-white/10 p-3 text-sm">{wallet.address}</code>
+              <code className="block break-all rounded-lg bg-white/10 p-3 text-sm">{address}</code>
             </div>
           </div>
         </section>
       )}
-
-      <div className="card">
-        <h2 className="font-headline text-headline-sm text-on-surface">Export private key</h2>
-        <p className="mt-1 text-sm text-on-surface-variant">
-          Re-enter your password to reveal your key once. Anyone with this key controls your wallet — never
-          share it, and store it in a password manager.
-        </p>
-        {exported ? (
-          <div className="mt-4">
-            <p className="label">Private key (shown once — copy it now)</p>
-            <code className="block break-all rounded-lg bg-surface-container-low p-3 text-sm dark:bg-white/5">
-              {exported.privateKey}
-            </code>
-          </div>
-        ) : (
-          <form onSubmit={exportKey} className="mt-4 flex flex-col gap-3 sm:flex-row">
-            <input className="input" name="password" type="password" required placeholder="Account password" />
-            <button className="btn-secondary whitespace-nowrap" disabled={busy}>
-              <Icon name="key" />
-              {busy ? "Verifying…" : "Reveal key"}
-            </button>
-          </form>
-        )}
-      </div>
     </div>
   );
 }

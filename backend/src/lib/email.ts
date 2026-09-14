@@ -1,7 +1,10 @@
 /**
- * Brevo transactional email. Used for email verification, password reset and
- * contract notifications. Failures are logged, never thrown — email must not
- * break API flows.
+ * Brevo transactional email — best-effort notification delivery only.
+ * Auth is wallet-signature (SIWE) now, not email/password, so there's no
+ * email verification or password-reset flow to send here. An account only
+ * gets emailed at all if it happens to have an email on file (optional,
+ * never required — see routes/auth.ts). Failures are logged, never thrown —
+ * email must not break API flows.
  */
 import { config } from "../config.js";
 import { logger } from "./logger.js";
@@ -40,18 +43,6 @@ const layout = (title: string, body: string) => `
 </div>`;
 
 export const email = {
-  verification: (to: string, token: string) =>
-    send(to, "Verify your Delivera email", layout("Verify your email",
-      `<p>Welcome to Delivera! Confirm your email to activate your account.</p>
-       <p><a href="${config.APP_URL}/verify-email?token=${token}" style="background:#4f46e5;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">Verify email</a></p>
-       <p>This link expires in 24 hours.</p>`)),
-
-  passwordReset: (to: string, token: string) =>
-    send(to, "Reset your Delivera password", layout("Reset your password",
-      `<p>We received a request to reset your password.</p>
-       <p><a href="${config.APP_URL}/reset-password?token=${token}" style="background:#4f46e5;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">Reset password</a></p>
-       <p>This link expires in 30 minutes. If you didn't ask for this, ignore this email.</p>`)),
-
   notify: (to: string, subject: string, message: string, ctaPath?: string) =>
     send(to, subject, layout(subject,
       `<p>${message}</p>${ctaPath ? `<p><a href="${config.APP_URL}${ctaPath}" style="background:#4f46e5;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">Open Delivera</a></p>` : ""}`)),

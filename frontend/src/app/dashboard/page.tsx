@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { api, formatGen } from "@/lib/api";
+import { api, formatContractAmount } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Icon } from "@/components/Icon";
 
@@ -64,7 +64,7 @@ export default function ContractsPage() {
               <Icon name="lock" />
             </div>
             <p className="text-sm text-on-surface-variant">Escrow Locked</p>
-            <h3 className="mt-1 font-headline text-headline-md text-on-surface">{formatGen(stats.totalLocked)}</h3>
+            <h3 className="mt-1 font-headline text-headline-md text-on-surface">{formatContractAmount(stats.totalLocked)}</h3>
           </div>
           <div className="card">
             <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-action-violet/10 text-action-violet">
@@ -120,7 +120,7 @@ export default function ContractsPage() {
                 {contracts.map((c) => (
                   <tr key={c.id} className="transition-colors hover:bg-surface-container-low dark:hover:bg-white/5">
                     <td className="px-6 py-4 font-semibold text-on-surface">{c.title}</td>
-                    <td className="px-6 py-4 font-bold text-on-surface">{formatGen(c.totalAtto)}</td>
+                    <td className="px-6 py-4 font-bold text-on-surface">{formatContractAmount(c.totalAtto)}</td>
                     <td className="px-6 py-4 text-on-surface-variant">
                       {c.milestones.filter((m) => m.status === "APPROVED").length}/{c.milestones.length} approved
                     </td>

@@ -22,17 +22,21 @@ class _Recipient:
 
 
 def _send_gen(to_address: str, amount: u256) -> None:
-    """The single emission choke point — every real GEN payout in this
-    contract funnels through here. Callers MUST zero/update their ledger
-    fields and persist state BEFORE calling this (checks-effects-interactions):
-    if the external transfer happened first, a reentrant call could observe
-    the still-nonzero ledger and drain the same balance twice.
+    """Deprecated no-op.
+
+    This contract used to move real native GEN here. Payment now happens in
+    USDC on Base Sepolia via `DeliveraEscrow.sol`, driven by a backend relay
+    that reads this contract's ledger fields and status transitions (which
+    every caller still updates and persists before reaching this point,
+    following the original checks-effects-interactions discipline) and
+    replays the same decision as a release/refund/dispute-split call on the
+    Base contract. This function is kept only so call sites don't need to
+    change, and intentionally does nothing.
     """
     if not to_address:
         raise gl.vm.UserError(f"{ERROR_EXPECTED} Missing recipient address")
     if amount <= u256(0):
         raise gl.vm.UserError(f"{ERROR_EXPECTED} Transfer amount must be positive")
-    _Recipient(Address(to_address)).emit_transfer(value=amount)
 
 
 from dataclasses import dataclass
@@ -529,44 +533,26 @@ Return ONLY a JSON object:
 
     @gl.public.write.payable
     def deposit(self) -> None:
-        """Credit the sender's un-earmarked balance with the real GEN attached
-        to this call, as pre-funding staging before `fund_escrow` locks it into
-        a specific contract.
+        """Deprecated and disabled.
 
-        `self.balances` only ever holds funds that are NOT yet locked into any
-        contract's escrow — once a milestone settles, a dispute resolves, or a
-        contract is cancelled/completes, the real GEN goes straight to the
-        recipient's wallet via `_send_gen` (see `_settle_milestone`,
-        `resolve_dispute`, `cancel_contract`, `_maybe_complete`), not back into
-        this ledger. `withdraw` exists only to reclaim balance that was
-        deposited but never locked into a contract.
+        This contract no longer custodies real value (see `_send_gen`) —
+        funding now happens directly in USDC on Base Sepolia via
+        `DeliveraEscrow.sol`. This method rejects any attached value so real
+        GEN can never get trapped here with no way back out.
         """
-        amount = int(gl.message.value)
-        self._require(amount > 0, "Deposit must be positive")
-        sender = self._sender()
-        self._credit(sender, amount)
-        self.deposits_total = u256(int(self.deposits_total) + amount)
-        self._next_seq()
+        raise gl.vm.UserError(
+            f"{ERROR_EXPECTED} deposit() is disabled — fund contracts in USDC "
+            f"via DeliveraEscrow.sol on Base Sepolia instead"
+        )
 
     @gl.public.write
     def withdraw(self, atto_amount: str) -> None:
-        """Withdraw un-earmarked deposited balance (funds never locked into a
-        contract, or reclaimed after a cancellation/refund credited here).
-
-        Debits the ledger and persists state BEFORE the external transfer
-        (checks-effects-interactions) — a reentrant call always finds the
-        balance already at its post-withdrawal value, so it can never drain
-        the same balance twice. The transfer only lands once this transaction
-        reaches FINALIZED, not just ACCEPTED — callers polling for the payout
-        should wait for that status.
-        """
-        amount = self._parse_atto(atto_amount)
-        self._require(amount > 0, "Withdrawal must be positive")
-        sender = self._sender()
-        self._debit(sender, amount)
-        self.withdrawals_total = u256(int(self.withdrawals_total) + amount)
-        self._next_seq()
-        _send_gen(sender, u256(amount))
+        """Deprecated and disabled — see `deposit`. Kept only so old
+        integrations get a clear error instead of a silent no-op payout."""
+        raise gl.vm.UserError(
+            f"{ERROR_EXPECTED} withdraw() is disabled — this contract no longer "
+            f"custodies real GEN"
+        )
 
     def _parse_atto(self, atto_amount: str) -> int:
         """Parse a decimal-string atto amount (u256-scale ints do not fit JSON)."""
@@ -679,13 +665,20 @@ Return ONLY a JSON object:
 
     @gl.public.write
     def fund_escrow(self, contract_id: str) -> None:
-        """Client locks the full contract amount from their spendable balance."""
+        """Mark a contract funded once the backend relay has confirmed the
+        client actually deposited the full amount in USDC into
+        `DeliveraEscrow.sol` on Base Sepolia.
+
+        No real value moves here anymore — this contract no longer custodies
+        funds (see `_send_gen`); `funded_atto`/`escrow_locked_total` are kept
+        purely as the bookkeeping mirror that the rest of this contract's
+        milestone/dispute logic already depends on.
+        """
         wc = self._get_contract(contract_id)
         sender = self._sender()
         self._require(sender == wc.client, "Only the client can fund escrow")
         self._require(wc.status == C_DRAFT, f"Cannot fund a {wc.status} contract")
         amount = int(wc.total_atto)
-        self._debit(sender, amount)
         wc.funded_atto = u256(amount)
         self.escrow_locked_total = u256(int(self.escrow_locked_total) + amount)
         self._set_status(wc, C_FUNDED)

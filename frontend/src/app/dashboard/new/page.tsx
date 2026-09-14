@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAppKitAccount, useAppKitProvider } from "@reown/appkit/react";
 import { api, ApiError } from "@/lib/api";
+import { genlayerWrite } from "@/lib/genlayer";
 import { Icon } from "@/components/Icon";
 
 interface MilestoneDraft {
@@ -10,7 +12,7 @@ interface MilestoneDraft {
   description: string;
   acceptanceCriteria: string;
   evidenceType: string;
-  amountGen: string;
+  amountUsd: string;
 }
 
 const EVIDENCE_TYPES: [string, string, string][] = [
@@ -29,51 +31,94 @@ const empty: MilestoneDraft = {
   description: "",
   acceptanceCriteria: "",
   evidenceType: "website",
-  amountGen: "",
+  amountUsd: "",
 };
 
-function genToAtto(gen: string): string {
-  const [whole = "0", frac = ""] = gen.trim().split(".");
+function dollarsToAtto(dollars: string): string {
+  const [whole = "0", frac = ""] = dollars.trim().split(".");
   return (BigInt(whole || "0") * 10n ** 18n + BigInt((frac + "0".repeat(18)).slice(0, 18))).toString();
 }
 
 export default function NewContractPage() {
   const router = useRouter();
+  const { address } = useAppKitAccount();
+  const { walletProvider } = useAppKitProvider<any>("eip155");
   const [milestones, setMilestones] = useState<MilestoneDraft[]>([{ ...empty }]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("Creating on-chain…");
 
   function update(i: number, patch: Partial<MilestoneDraft>) {
     setMilestones((ms) => ms.map((m, j) => (j === i ? { ...m, ...patch } : m)));
   }
 
-  const totalGen = useMemo(
-    () => milestones.reduce((sum, m) => sum + (Number(m.amountGen) || 0), 0),
+  const totalUsd = useMemo(
+    () => milestones.reduce((sum, m) => sum + (Number(m.amountUsd) || 0), 0),
     [milestones],
   );
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setBusy(true);
     setError("");
+    if (!address || !walletProvider) {
+      setError("Connect your wallet first");
+      return;
+    }
+    setBusy(true);
     const form = new FormData(e.currentTarget);
+    const provider = String(form.get("provider") ?? "").trim();
+    const isWallet = /^0x[a-fA-F0-9]{40}$/.test(provider);
+    const title = String(form.get("title") ?? "");
+    const description = String(form.get("description") ?? "");
+    const chainMilestones = milestones.map((m) => ({
+      title: m.title,
+      description: m.description,
+      acceptanceCriteria: m.acceptanceCriteria,
+      evidenceType: m.evidenceType,
+      amountAtto: dollarsToAtto(m.amountUsd),
+    }));
+
     try {
-      const res = await api.post<{ contract: { id: string } }>("/contracts", {
-        providerEmail: form.get("providerEmail"),
-        title: form.get("title"),
-        description: form.get("description") ?? "",
-        milestones: milestones.map((m) => ({
-          title: m.title,
-          description: m.description,
-          acceptanceCriteria: m.acceptanceCriteria,
-          evidenceType: m.evidenceType,
-          amountAtto: genToAtto(m.amountGen),
-        })),
+      let providerAddress = provider;
+      if (!isWallet) {
+        setBusyLabel("Looking up provider…");
+        const found = await api
+          .get<{ walletAddress: string }>(`/contracts/resolve-provider?email=${encodeURIComponent(provider)}`)
+          .catch(() => null);
+        if (!found?.walletAddress) {
+          throw new Error("No Delivera account with that email has a connected wallet yet");
+        }
+        providerAddress = found.walletAddress;
+      }
+
+      setBusyLabel("Sign in your wallet to create the contract on GenLayer…");
+      await genlayerWrite(walletProvider, address, "create_contract", [
+        providerAddress,
+        title,
+        description,
+        JSON.stringify(
+          chainMilestones.map((m) => ({
+            title: m.title,
+            description: m.description,
+            acceptance_criteria: m.acceptanceCriteria,
+            evidence_type: m.evidenceType,
+            amount_atto: m.amountAtto,
+          })),
+        ),
+      ]);
+
+      setBusyLabel("Confirming with Delivera…");
+      const res = await api.post<{ contract: { id: string } }>("/contracts/confirm-create", {
+        ...(isWallet ? { providerWalletAddress: provider } : { providerEmail: provider }),
+        title,
+        description,
+        milestones: chainMilestones,
       });
       router.push(`/dashboard/contracts/${res.contract.id}`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to create contract");
+      setError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Failed to create contract");
       setBusy(false);
+      setBusyLabel("Creating on-chain…");
     }
   }
 
@@ -118,17 +163,20 @@ export default function NewContractPage() {
               <textarea className="input" id="description" name="description" rows={3} maxLength={8000} />
             </div>
             <div>
-              <label className="label" htmlFor="providerEmail">
-                Provider&apos;s Delivera email
+              <label className="label" htmlFor="provider">
+                Provider&apos;s wallet address or email
               </label>
               <input
                 className="input"
-                id="providerEmail"
-                name="providerEmail"
-                type="email"
+                id="provider"
+                name="provider"
                 required
-                placeholder="freelancer@example.com"
+                placeholder="0x… or freelancer@example.com"
               />
+              <p className="mt-1 text-xs text-on-surface-variant">
+                They must have connected a wallet to Delivera at least once. A wallet address is
+                more reliable — email is only on file if they added one.
+              </p>
             </div>
           </div>
         </section>
@@ -168,13 +216,13 @@ export default function NewContractPage() {
                     />
                   </div>
                   <div>
-                    <label className="label">Amount (GEN)</label>
+                    <label className="label">Amount (USDC)</label>
                     <input
                       className="input"
                       required
                       pattern="\d+(\.\d+)?"
-                      value={m.amountGen}
-                      onChange={(e) => update(i, { amountGen: e.target.value })}
+                      value={m.amountUsd}
+                      onChange={(e) => update(i, { amountUsd: e.target.value })}
                       placeholder="100"
                     />
                   </div>
@@ -255,7 +303,7 @@ export default function NewContractPage() {
                     Total escrow
                   </span>
                   <span className="text-2xl font-bold text-primary">
-                    {totalGen.toLocaleString(undefined, { maximumFractionDigits: 4 })} GEN
+                    {totalUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
                   </span>
                 </div>
                 <div>
@@ -272,7 +320,7 @@ export default function NewContractPage() {
                 disabled={busy}
               >
                 <Icon name="lock" />
-                {busy ? "Creating on-chain…" : "Lock escrow & create"}
+                {busy ? busyLabel : "Lock escrow & create"}
               </button>
               <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-tighter text-on-surface-variant">
                 Powered by GenLayer consensus

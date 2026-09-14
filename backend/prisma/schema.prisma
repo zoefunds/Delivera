@@ -35,24 +35,21 @@ enum MilestoneStatus {
   EXHAUSTED
 }
 
-enum TokenPurpose {
-  EMAIL_VERIFY
-  PASSWORD_RESET
-}
 
 model User {
   id              String    @id @default(uuid())
-  email           String    @unique
-  passwordHash    String
+  // Wallet-signature (SIWE-style) auth is the only login path now — the
+  // connected wallet's address is the identity. Kept lowercase for lookup.
+  walletAddress   String?   @unique
+  email           String?   @unique
+  passwordHash    String?
   name            String
   role            UserRole  @default(BOTH)
   emailVerifiedAt DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  wallet          Wallet?
   sessions        Session[]
-  emailTokens     EmailToken[]
   projects        Project[]
   clientContracts   Contract[] @relation("client")
   providerContracts Contract[] @relation("provider")
@@ -65,20 +62,6 @@ model User {
   reviewsReceived Review[]   @relation("reviewee")
   apiKeys         ApiKey[]
   disputesRaised  Dispute[]
-}
-
-model Wallet {
-  id                  String    @id @default(uuid())
-  userId              String    @unique
-  address             String    @unique
-  encryptedPrivateKey String
-  kdfSalt             String
-  iv                  String
-  authTag             String
-  exportedAt          DateTime?
-  createdAt           DateTime  @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Session {
@@ -96,19 +79,6 @@ model Session {
   @@index([userId])
 }
 
-model EmailToken {
-  id        String       @id @default(uuid())
-  userId    String
-  tokenHash String       @unique
-  purpose   TokenPurpose
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime     @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, purpose])
-}
 
 model Project {
   id          String   @id @default(uuid())
@@ -139,6 +109,9 @@ model Contract {
   fundedAtto      Decimal        @default(0) @db.Decimal(78, 0)
   releasedAtto    Decimal        @default(0) @db.Decimal(78, 0)
   refundedAtto    Decimal        @default(0) @db.Decimal(78, 0)
+  // Set once the Base Sepolia escrow relay has refunded this contract's
+  // remaining balance (on cancellation) — idempotency guard for jobs/relay.ts.
+  refundRelayTxHash String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
@@ -167,6 +140,9 @@ model Milestone {
   status             MilestoneStatus @default(PENDING)
   attempts           Int             @default(0)
   maxAttempts        Int             @default(3)
+  // Set once the Base Sepolia escrow relay has paid this milestone out to
+  // the provider — idempotency guard for jobs/relay.ts (never release twice).
+  relayTxHash        String?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
@@ -222,6 +198,9 @@ model Dispute {
   providerBps       Int?
   resolutionSummary String?
   resolvedAt        DateTime?
+  // Set once the Base Sepolia escrow relay has paid out this dispute's
+  // resolution split — idempotency guard for jobs/relay.ts.
+  relayTxHash       String?
   createdAt         DateTime  @default(now())
 
   contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)

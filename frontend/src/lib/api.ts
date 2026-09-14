@@ -27,7 +27,11 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
     ...init,
     credentials: "include",
     headers: {
-      "Content-Type": "application/json",
+      // Only claim a JSON body when one is actually being sent — Fastify's
+      // JSON parser rejects an application/json request with no body at all
+      // (e.g. POST /contracts/:id/cancel, which takes no payload), so a
+      // fixed Content-Type header here broke every no-body POST.
+      ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
       ...(getAccessToken() ? { Authorization: `Bearer ${getAccessToken()}` } : {}),
       ...init.headers,
     },
@@ -61,14 +65,34 @@ export const api = {
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
 
-export function formatGen(atto: string | number | null | undefined): string {
-  if (atto === null || atto === undefined) return "—";
+export const usdcAddress =
+  process.env.NEXT_PUBLIC_USDC_ADDRESS ?? "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+
+/** Formats a raw on-chain USDC amount (6-decimal base units) — use this only
+ * for values read directly from an ERC20 balanceOf/transfer, e.g. the
+ * connected wallet's live Base Sepolia balance. */
+export function formatUsdc(amount: string | number | bigint | null | undefined): string {
+  return formatScaled(amount, 6n);
+}
+
+/** Formats a Delivera contract/milestone ledger amount — these are stored
+ * 18-decimal-scaled dollar-equivalent values (the "*Atto" columns, inherited
+ * from GenLayer's native-GEN accounting convention; see dollarsToAtto() in
+ * dashboard/new/page.tsx), NOT raw on-chain USDC units. Mixing this up with
+ * `formatUsdc` displays amounts ~1e12x too large. */
+export function formatContractAmount(amount: string | number | bigint | null | undefined): string {
+  return formatScaled(amount, 18n);
+}
+
+function formatScaled(amount: string | number | bigint | null | undefined, decimals: bigint): string {
+  if (amount === null || amount === undefined) return "—";
   try {
-    const value = BigInt(String(atto));
-    const whole = value / 10n ** 18n;
-    const frac = ((value % 10n ** 18n) * 100n) / 10n ** 18n;
-    return `${whole}.${frac.toString().padStart(2, "0")} GEN`;
+    const base = 10n ** decimals;
+    const value = BigInt(String(amount));
+    const whole = value / base;
+    const frac = ((value % base) * 100n) / base;
+    return `${whole}.${frac.toString().padStart(2, "0")} USDC`;
   } catch {
-    return String(atto);
+    return String(amount);
   }
 }

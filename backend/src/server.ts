@@ -13,6 +13,8 @@ import { walletRoutes } from "./routes/wallet.js";
 import { contractRoutes } from "./routes/contracts.js";
 import { projectRoutes, notificationRoutes, reviewRoutes, attachmentRoutes } from "./routes/misc.js";
 import { contractConfigured } from "./lib/genlayer.js";
+import { isEscrowConfigured } from "./services/baseSepolia.js";
+import { startRelayJobs } from "./jobs/relay.js";
 
 export async function buildServer() {
   const app = Fastify({ loggerInstance: logger, trustProxy: true, bodyLimit: 1024 * 1024 });
@@ -45,6 +47,7 @@ export async function buildServer() {
     try { await prisma.$queryRaw`SELECT 1`; checks.database = "ok"; } catch { checks.database = "down"; }
     try { await redis.ping(); checks.redis = "ok"; } catch { checks.redis = "down"; }
     checks.chain = contractConfigured() ? "configured" : "unconfigured";
+    checks.escrow = isEscrowConfigured() ? "configured" : "unconfigured";
     return { status: checks.database === "ok" ? "healthy" : "degraded", checks };
   });
 
@@ -63,7 +66,10 @@ const isMain = process.argv[1]?.endsWith("server.ts") || process.argv[1]?.endsWi
 if (isMain) {
   buildServer()
     .then((app) => app.listen({ port: config.PORT, host: "0.0.0.0" }))
-    .then((address) => logger.info({ address }, "Delivera API listening"))
+    .then((address) => {
+      logger.info({ address }, "Delivera API listening");
+      startRelayJobs();
+    })
     .catch((err) => {
       logger.error({ err }, "failed to start");
       process.exit(1);

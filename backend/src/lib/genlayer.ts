@@ -44,6 +44,40 @@ function decodeGenvmResult(raw: unknown): unknown {
   return raw;
 }
 
+/**
+ * Polls `readContract(method, args)` until `predicate(value)` is true.
+ *
+ * Used to confirm a write the FRONTEND already submitted (signed with the
+ * user's own wallet) actually landed — reads can lag a few seconds behind a
+ * transaction reaching ACCEPTED consensus on GenLayer StudioNet, so a single
+ * read right after the frontend's write can still see stale state.
+ */
+export async function readUntilFound<T>(
+  method: string,
+  args: unknown[],
+  predicate: (value: T) => boolean,
+  opts: { retries?: number; interval?: number } = {},
+): Promise<T> {
+  const retries = opts.retries ?? 20;
+  const interval = opts.interval ?? 3000;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const value = (await readContract(method, args)) as T;
+      if (predicate(value)) return value;
+    } catch (err) {
+      lastErr = err;
+      logger.warn({ method, attempt, err }, "readUntilFound: read failed, will retry");
+    }
+    if (attempt < retries) await new Promise((resolve) => setTimeout(resolve, interval));
+  }
+  const seconds = Math.round((retries * interval) / 1000);
+  const detail = lastErr instanceof Error ? `; last error: ${lastErr.message}` : "";
+  throw new Error(
+    `Timed out after ${seconds}s waiting for ${method} to reflect the expected on-chain state${detail}`,
+  );
+}
+
 export async function writeContract(
   privateKey: string,
   method: string,

@@ -1,39 +1,68 @@
-/** Auth routes: register (with custodial wallet), verify email, login, refresh,
- *  logout, forgot/reset password via Brevo. */
+/** Auth routes: wallet-signature (SIWE-style) auth.
+ *
+ * Identity is the user's connected wallet address, not an email/password.
+ * Flow: GET /nonce?address=0x... issues a one-time nonce + message to sign,
+ * POST /verify checks the signature recovers that address and issues the
+ * same JWT/refresh-cookie session the app has always used. This same wallet
+ * address is also the user's GenLayer identity — every GenLayer write is
+ * signed by the user themselves in the browser, so a brand-new address just
+ * gets a plain User row on first sign-in (no custodial key is generated).
+ */
 import type { FastifyInstance } from "fastify";
-import argon2 from "argon2";
-import { Wallet as EthersWallet } from "ethers";
+import { verifyMessage, getAddress, isAddress } from "ethers";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { email } from "../lib/email.js";
-import { encryptPrivateKey, randomToken, sha256 } from "../lib/crypto.js";
+import { redis } from "../lib/redis.js";
+import { randomToken, sha256 } from "../lib/tokens.js";
 import { signAccessToken, requireAuth } from "../plugins/auth.js";
 import { rateLimit } from "../plugins/rateLimit.js";
 import { audit } from "../lib/audit.js";
 import { config, isProd } from "../config.js";
 
-const authLimit = rateLimit({ max: 5, windowSec: 900, keyPrefix: "auth" });
-
-const registerSchema = z.object({
-  email: z.string().email().max(255),
-  password: z.string().min(10).max(200),
-  name: z.string().min(1).max(120),
-  role: z.enum(["CLIENT", "PROVIDER", "BOTH"]).default("BOTH"),
-});
+const authLimit = rateLimit({ max: 10, windowSec: 900, keyPrefix: "auth" });
 
 const REFRESH_COOKIE = "delivera_refresh";
+const NONCE_TTL_SEC = 5 * 60;
+
+function nonceKey(address: string): string {
+  return `siwe:nonce:${address}`;
+}
+
+function messageKey(address: string): string {
+  return `siwe:message:${address}`;
+}
+
+/** Builds the SIWE message a client is asked to sign. Includes a live
+ * "Issued At" timestamp, so the exact string built here MUST be persisted
+ * (see messageKey) and reused verbatim at verify time — recomputing it
+ * there would embed a different timestamp and the signature would never
+ * recover to the right address no matter what the client actually signed. */
+function siweMessage(address: string, nonce: string): string {
+  const domain = new URL(config.APP_URL).host;
+  return (
+    `${domain} wants you to sign in with your Ethereum account:\n${address}\n\n` +
+    `Sign in to Delivera.\n\n` +
+    `URI: ${config.APP_URL}\nVersion: 1\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}`
+  );
+}
 
 function refreshCookieOpts() {
   return {
     httpOnly: true,
+    // Frontend (vercel.app) and backend (fly.dev) are different origins, so
+    // this cookie is sent on a cross-site fetch — SameSite=Lax is NEVER
+    // included on cross-site XHR/fetch (only top-level GET navigation), so
+    // the silent-refresh-on-401 flow in frontend/src/lib/api.ts would always
+    // fail. SameSite=None requires Secure, which is already true in prod
+    // (https) — falls back to Lax only for same-origin local dev.
     secure: isProd,
-    sameSite: "lax" as const,
+    sameSite: (isProd ? "none" : "lax") as "none" | "lax",
     path: "/api/v1/auth",
     maxAge: config.REFRESH_TOKEN_TTL_DAYS * 86400,
   };
 }
 
-async function issueSession(app: FastifyInstance, userId: string, ip: string, userAgent: string) {
+async function issueSession(userId: string, ip: string, userAgent: string) {
   const token = randomToken(48);
   await prisma.session.create({
     data: {
@@ -47,92 +76,68 @@ async function issueSession(app: FastifyInstance, userId: string, ip: string, us
   return token;
 }
 
+function short(address: string): string {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/register", { preHandler: [authLimit] }, async (req, reply) => {
-    const body = registerSchema.parse(req.body);
-    const existing = await prisma.user.findUnique({ where: { email: body.email.toLowerCase() } });
-    if (existing) {
-      return reply.code(409).send({ error: { code: "EMAIL_TAKEN", message: "Email already registered" } });
+  // ---- step 1: get a nonce to sign ------------------------------------
+  app.get("/nonce", { preHandler: [authLimit] }, async (req, reply) => {
+    const { address } = z.object({ address: z.string() }).parse(req.query);
+    if (!isAddress(address)) {
+      return reply.code(400).send({ error: { code: "BAD_ADDRESS", message: "Not a valid wallet address" } });
     }
-
-    // Custodial GenLayer wallet — generated once, encrypted at rest, tied to
-    // the account forever (survives devices, cache clears, reinstalls).
-    const wallet = EthersWallet.createRandom();
-    const enc = encryptPrivateKey(wallet.privateKey);
-
-    const user = await prisma.user.create({
-      data: {
-        email: body.email.toLowerCase(),
-        passwordHash: await argon2.hash(body.password, { type: argon2.argon2id }),
-        name: body.name,
-        role: body.role,
-        wallet: {
-          create: {
-            address: wallet.address,
-            encryptedPrivateKey: enc.ciphertext,
-            kdfSalt: enc.salt,
-            iv: enc.iv,
-            authTag: enc.authTag,
-          },
-        },
-      },
-    });
-
-    const verifyToken = randomToken();
-    await prisma.emailToken.create({
-      data: {
-        userId: user.id,
-        tokenHash: sha256(verifyToken),
-        purpose: "EMAIL_VERIFY",
-        expiresAt: new Date(Date.now() + 24 * 3600_000),
-      },
-    });
-    void email.verification(user.email, verifyToken);
-    await audit(req, "auth.register", { email: user.email }, user.id);
-
-    const accessToken = signAccessToken({ id: user.id, email: user.email, role: user.role });
-    const refresh = await issueSession(app, user.id, req.ip, String(req.headers["user-agent"] ?? ""));
-    reply.setCookie(REFRESH_COOKIE, refresh, refreshCookieOpts());
-    return reply.code(201).send({
-      user: { id: user.id, email: user.email, name: user.name, role: user.role, walletAddress: wallet.address },
-      accessToken,
-    });
+    const checksummed = getAddress(address);
+    const nonce = randomToken(16);
+    const message = siweMessage(checksummed, nonce);
+    await redis.set(nonceKey(checksummed), nonce, "EX", NONCE_TTL_SEC);
+    await redis.set(messageKey(checksummed), message, "EX", NONCE_TTL_SEC);
+    return { nonce, message };
   });
 
-  app.post("/verify-email", async (req, reply) => {
-    const { token } = z.object({ token: z.string().min(10) }).parse(req.body);
-    const record = await prisma.emailToken.findUnique({ where: { tokenHash: sha256(token) } });
-    if (!record || record.purpose !== "EMAIL_VERIFY" || record.usedAt || record.expiresAt < new Date()) {
-      return reply.code(400).send({ error: { code: "INVALID_TOKEN", message: "Invalid or expired token" } });
+  // ---- step 2: verify the signed message, issue a session -------------
+  app.post("/verify", { preHandler: [authLimit] }, async (req, reply) => {
+    const body = z.object({ address: z.string(), signature: z.string().min(1) }).parse(req.body);
+    if (!isAddress(body.address)) {
+      return reply.code(400).send({ error: { code: "BAD_ADDRESS", message: "Not a valid wallet address" } });
     }
-    await prisma.$transaction([
-      prisma.emailToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
-      prisma.user.update({ where: { id: record.userId }, data: { emailVerifiedAt: new Date() } }),
-    ]);
-    return { ok: true };
-  });
+    const address = getAddress(body.address);
+    const message = await redis.get(messageKey(address));
+    if (!message) {
+      return reply.code(400).send({ error: { code: "NONCE_EXPIRED", message: "Request a fresh nonce and try again" } });
+    }
 
-  app.post("/login", { preHandler: [authLimit] }, async (req, reply) => {
-    const body = z.object({ email: z.string().email(), password: z.string() }).parse(req.body);
-    const user = await prisma.user.findUnique({
-      where: { email: body.email.toLowerCase() },
-      include: { wallet: true },
-    });
-    const valid = user && (await argon2.verify(user.passwordHash, body.password).catch(() => false));
-    if (!valid || !user) {
-      await audit(req, "auth.login_failed", { email: body.email });
-      return reply.code(401).send({ error: { code: "BAD_CREDENTIALS", message: "Invalid email or password" } });
+    let recovered: string;
+    try {
+      recovered = verifyMessage(message, body.signature);
+    } catch {
+      return reply.code(401).send({ error: { code: "BAD_SIGNATURE", message: "Could not verify signature" } });
     }
+    if (getAddress(recovered) !== address) {
+      await audit(req, "auth.verify_failed", { address });
+      return reply.code(401).send({ error: { code: "BAD_SIGNATURE", message: "Signature does not match address" } });
+    }
+    await redis.del(nonceKey(address), messageKey(address)); // one-time use
+
+    const walletAddress = address.toLowerCase();
+    let user = await prisma.user.findUnique({ where: { walletAddress } });
+    if (!user) {
+      // Same wallet address is now the GenLayer identity too — no custodial
+      // signing wallet to provision anymore.
+      user = await prisma.user.create({
+        data: { walletAddress, name: short(address), role: "BOTH" },
+      });
+      await audit(req, "auth.register", { walletAddress }, user.id);
+    }
+
     await audit(req, "auth.login", undefined, user.id);
-    const accessToken = signAccessToken({ id: user.id, email: user.email, role: user.role });
-    const refresh = await issueSession(app, user.id, req.ip, String(req.headers["user-agent"] ?? ""));
+    const accessToken = signAccessToken({
+      id: user.id, walletAddress, email: user.email, role: user.role,
+    });
+    const refresh = await issueSession(user.id, req.ip, String(req.headers["user-agent"] ?? ""));
     reply.setCookie(REFRESH_COOKIE, refresh, refreshCookieOpts());
     return {
-      user: {
-        id: user.id, email: user.email, name: user.name, role: user.role,
-        emailVerified: Boolean(user.emailVerifiedAt),
-        walletAddress: user.wallet?.address ?? null,
-      },
+      user: { id: user.id, walletAddress, name: user.name, role: user.role, email: user.email },
       accessToken,
     };
   });
@@ -149,10 +154,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
     // Rotate: revoke old, issue new.
     await prisma.session.update({ where: { id: session.id }, data: { revokedAt: new Date() } });
-    const refresh = await issueSession(app, session.userId, req.ip, String(req.headers["user-agent"] ?? ""));
+    const refresh = await issueSession(session.userId, req.ip, String(req.headers["user-agent"] ?? ""));
     reply.setCookie(REFRESH_COOKIE, refresh, refreshCookieOpts());
     const accessToken = signAccessToken({
-      id: session.user.id, email: session.user.email, role: session.user.role,
+      id: session.user.id,
+      walletAddress: session.user.walletAddress ?? "",
+      email: session.user.email,
+      role: session.user.role,
     });
     return { accessToken };
   });
@@ -169,53 +177,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  app.post("/forgot-password", { preHandler: [authLimit] }, async (req) => {
-    const { email: rawEmail } = z.object({ email: z.string().email() }).parse(req.body);
-    const user = await prisma.user.findUnique({ where: { email: rawEmail.toLowerCase() } });
-    if (user) {
-      const token = randomToken();
-      await prisma.emailToken.create({
-        data: {
-          userId: user.id,
-          tokenHash: sha256(token),
-          purpose: "PASSWORD_RESET",
-          expiresAt: new Date(Date.now() + 30 * 60_000),
-        },
-      });
-      void email.passwordReset(user.email, token);
-      await audit(req, "auth.forgot_password", undefined, user.id);
-    }
-    // Always 200 — never reveal whether the email exists.
-    return { ok: true };
-  });
-
-  app.post("/reset-password", { preHandler: [authLimit] }, async (req, reply) => {
-    const body = z.object({ token: z.string().min(10), newPassword: z.string().min(10).max(200) }).parse(req.body);
-    const record = await prisma.emailToken.findUnique({ where: { tokenHash: sha256(body.token) } });
-    if (!record || record.purpose !== "PASSWORD_RESET" || record.usedAt || record.expiresAt < new Date()) {
-      return reply.code(400).send({ error: { code: "INVALID_TOKEN", message: "Invalid or expired token" } });
-    }
-    await prisma.$transaction([
-      prisma.emailToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
-      prisma.user.update({
-        where: { id: record.userId },
-        data: { passwordHash: await argon2.hash(body.newPassword, { type: argon2.argon2id }) },
-      }),
-      prisma.session.updateMany({ where: { userId: record.userId, revokedAt: null }, data: { revokedAt: new Date() } }),
-    ]);
-    await audit(req, "auth.password_reset", undefined, record.userId);
-    return { ok: true };
-  });
-
   app.get("/me", { preHandler: [requireAuth] }, async (req) => {
-    const user = await prisma.user.findUniqueOrThrow({
-      where: { id: req.user!.id },
-      include: { wallet: { select: { address: true } } },
-    });
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: req.user!.id } });
     return {
-      id: user.id, email: user.email, name: user.name, role: user.role,
-      emailVerified: Boolean(user.emailVerifiedAt),
-      walletAddress: user.wallet?.address ?? null,
+      id: user.id,
+      walletAddress: user.walletAddress,
+      email: user.email,
+      name: user.name,
+      role: user.role,
     };
   });
 }

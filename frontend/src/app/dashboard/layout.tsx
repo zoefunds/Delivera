@@ -10,10 +10,9 @@ import { Logo } from "@/components/Logo";
 
 interface Me {
   id: string;
-  email: string;
+  email: string | null;
   name: string;
   walletAddress: string | null;
-  emailVerified: boolean;
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -111,12 +110,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           ))}
         </nav>
       </header>
-      {me && !me.emailVerified && (
-        <div className="flex items-center justify-center gap-2 bg-tertiary-fixed px-6 py-2 text-center text-sm font-medium text-on-tertiary-fixed-variant">
-          <Icon name="mail" className="!text-base" />
-          Please verify your email — check your inbox for the verification link.
-        </div>
-      )}
       <main className="mx-auto w-full max-w-[1440px] flex-grow px-safe-margin py-stack-md">{children}</main>
       <footer className="border-t border-border-subtle bg-surface-container-lowest px-safe-margin py-stack-md dark:border-white/10 dark:bg-transparent">
         <div className="mx-auto flex max-w-[1440px] flex-col items-center justify-between gap-4 text-sm text-on-surface-variant/70 sm:flex-row">

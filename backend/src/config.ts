@@ -7,7 +7,6 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
   JWT_SECRET: z.string().min(32),
-  WALLET_MASTER_KEY: z.string().min(32),
   BREVO_API_KEY: z.string().min(1),
   BREVO_SENDER_EMAIL: z.string().email(),
   BREVO_SENDER_NAME: z.string().default("Delivera"),
@@ -15,6 +14,13 @@ const schema = z.object({
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   GENLAYER_RPC_URL: z.string().url().default("https://studio.genlayer.com/api"),
   GENLAYER_CONTRACT_ADDRESS: z.string().default(""),
+  // Base Sepolia payment layer (contracts/base/DeliveraEscrow.sol, deployed
+  // separately). GenLayer only decides milestone/dispute outcomes now; real
+  // USDC escrow and payout live here. See src/services/baseSepolia.ts.
+  BASE_SEPOLIA_RPC_URL: z.string().url().default("https://sepolia.base.org"),
+  BASE_SEPOLIA_USDC_ADDRESS: z.string().default("0x036CbD53842c5426634e7929541eC2318f3dCF7e"),
+  DELIVERA_ESCROW_ADDRESS: z.string().default(""),
+  BASE_SEPOLIA_RELAYER_PRIVATE_KEY: z.string().default(""),
   S3_ENDPOINT: z.string().default(""),
   S3_BUCKET: z.string().default(""),
   AWS_ACCESS_KEY_ID: z.string().default(""),
