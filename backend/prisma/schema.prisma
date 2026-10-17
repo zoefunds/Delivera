@@ -110,7 +110,7 @@ model Contract {
   releasedAtto    Decimal        @default(0) @db.Decimal(78, 0)
   refundedAtto    Decimal        @default(0) @db.Decimal(78, 0)
   // Set once the Base Sepolia escrow relay has refunded this contract's
-  // remaining balance (on cancellation) — idempotency guard for jobs/relay.ts.
+  // remaining balance (on cancellation) — recovery mirror; on-chain ids are authoritative.
   refundRelayTxHash String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -141,7 +141,7 @@ model Milestone {
   attempts           Int             @default(0)
   maxAttempts        Int             @default(3)
   // Set once the Base Sepolia escrow relay has paid this milestone out to
-  // the provider — idempotency guard for jobs/relay.ts (never release twice).
+  // the provider — recovery mirror; on-chain milestone state prevents double release.
   relayTxHash        String?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
@@ -199,7 +199,7 @@ model Dispute {
   resolutionSummary String?
   resolvedAt        DateTime?
   // Set once the Base Sepolia escrow relay has paid out this dispute's
-  // resolution split — idempotency guard for jobs/relay.ts.
+  // resolution split — recovery mirror; on-chain settlement state is authoritative.
   relayTxHash       String?
   createdAt         DateTime  @default(now())
 

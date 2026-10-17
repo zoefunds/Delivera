@@ -2,9 +2,10 @@
 
 Date: 2026-10-18 (Africa/Lagos)
 
-## Deployed source and addresses
+## Deployed evidence source and addresses
 
-- Source commit: `d9d94c0b5b16edcc4982875f89dd53542b658e92`
+- Funded live-run source commit: `d9d94c0b5b16edcc4982875f89dd53542b658e92`
+- Latest remediated source commit: `6cffd60` (adds the post-arbitration re-dispute guard and automated recovery/funding-claim regressions)
 - GenLayer StudioNet contract: `0xB19331f411618Abb253a01Fa5b457D910c92D8F6`
 - GenLayer deployment transaction: `0x79b954dd00da88b3f42028ed23e5f96bdf58d1c6ffeeb188a46df411f054dfc7`
 - Base Sepolia escrow v2: `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`
@@ -12,17 +13,23 @@ Date: 2026-10-18 (Africa/Lagos)
 - Client and decision authority: `0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb`
 - Configured relayer (restored after the run): `0xd07E3D1bAF59F1c09e2F8842786D89B716915f3E`
 
-The GenLayer deployment receipt reached `FINALIZED` (`status: 7`) with
+The funded evidence deployment receipt reached `FINALIZED` (`status: 7`) with
 `MAJORITY_AGREE` and unanimous revealed votes. The Base deployment was compiled
-from the source commit above.
+from the funded live-run source commit above. Commit `6cffd60` changes only the
+GenLayer dispute-entry guard, backend testability/comments, frontend dispute
+button eligibility, CI, and documentation; it does not change the deployed Base
+escrow bytecode. A replacement StudioNet deployment requires the encrypted
+`anchor-deploy` keystore password, which is intentionally not stored in this
+repository.
 
 ## Reproducible checks
 
 ```bash
 cd contracts/base && npm test
-cd ../../backend && npm run typecheck
+cd ../../backend && npm test && npm run typecheck
 cd ../frontend && npm run build
 cd .. && python3 -m py_compile contracts/delivera.py
+python3 -m unittest contracts/test_dispute_guards.py
 genvm-lint check contracts/delivera.py
 git diff --check
 ```
@@ -30,9 +37,9 @@ git diff --check
 Observed results:
 
 - Solidity: 6 passing tests.
-- Backend TypeScript: passed.
+- Backend: 3 tests passed (false funding claims and interrupted-relay recovery); TypeScript passed.
 - Frontend production build: passed; all 11 routes generated.
-- Python syntax compilation: passed.
+- Python syntax compilation and the settled-milestone dispute-guard regression: passed.
 - GenVM static lint: 3 checks passed. Full SDK validation could not run because
   the linter's pinned SDK archive was unavailable (`filename ...tar not found`).
 - Patch whitespace validation: passed.
@@ -91,6 +98,13 @@ signal used when a Base receipt succeeds before PostgreSQL records its hash: a
 restarted relay observes the deterministic settlement id on-chain, records the
 recovered settlement, and does not broadcast again.
 
+The backend regression suite also failure-injects that exact uncertain state:
+an approved database row has no saved hash while its deterministic Base
+settlement id is already processed. The sweep records
+`RECOVERED:<settlementId>`, updates the accounting mirror once, and asserts that
+`releaseMilestone` is not called. This makes the recovery procedure reproducible
+without spending funds.
+
 Two live adversarial retries were made after milestone 1 settled:
 
 1. Reusing the exact deterministic id reverted with `DeliveraEscrow: settlement already processed`.
@@ -108,3 +122,12 @@ or allocation signatures, altered settlement amounts, non-relayer submission,
 60/40 partial dispute arithmetic, exact unrelated-fund isolation, replay
 protection, second-id/same-milestone rejection, and mixed
 release/dispute/cancellation accounting.
+
+## GenLayer dispute lifecycle regression
+
+Post-payment disputes are unsupported. `raise_dispute` now checks both the
+visible milestone status and `settled_atto == 0` before creating or appending a
+dispute. This closes the case where an arbitrated `EXHAUSTED` milestone could be
+opened again and leave the agreement frozen in `DISPUTED`. CI parses the
+contract and verifies that this guard occurs before the first dispute-state
+mutation; the UI independently suppresses the action for resolved milestones.

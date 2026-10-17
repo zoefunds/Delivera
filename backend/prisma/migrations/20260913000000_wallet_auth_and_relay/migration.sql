@@ -8,11 +8,11 @@ ALTER TABLE "User" ADD COLUMN "walletAddress" TEXT;
 
 CREATE UNIQUE INDEX "User_walletAddress_key" ON "User"("walletAddress");
 
--- AlterTable: Milestone — relay idempotency guard.
+-- AlterTable: Milestone — relay receipt/recovery mirror (on-chain state is authoritative).
 ALTER TABLE "Milestone" ADD COLUMN "relayTxHash" TEXT;
 
--- AlterTable: Contract — refund relay idempotency guard.
+-- AlterTable: Contract — refund receipt/recovery mirror.
 ALTER TABLE "Contract" ADD COLUMN "refundRelayTxHash" TEXT;
 
--- AlterTable: Dispute — resolution relay idempotency guard.
+-- AlterTable: Dispute — resolution receipt/recovery mirror.
 ALTER TABLE "Dispute" ADD COLUMN "relayTxHash" TEXT;

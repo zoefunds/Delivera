@@ -90,7 +90,7 @@ that history). GenLayer no longer moves any value at all — `_send_gen` is now 
 | Layer | Tech | Where |
 |---|---|---|
 | Intelligent Contract (adjudication) | Python (genlayer-py-std), single contract, no longer moves value | GenLayer StudioNet |
-| Escrow Contract (custody) | Solidity, holds real USDC, relayer-controlled release/refund/dispute functions | Base Sepolia |
+| Escrow Contract (custody) | Solidity, holds real USDC; settlement requires a relayer call plus an exact authority signature | Base Sepolia |
 | Backend API | Node 22, Fastify 5, Prisma, PostgreSQL, Upstash Redis, Brevo, Tigris S3, ethers v6 | Fly.io |
 | Frontend | Next.js 15 (App Router), Tailwind, Reown AppKit wallet connect, dark mode | Vercel |
 | Login wallet | The user's own external wallet (MetaMask etc.), connected via Reown AppKit; signs in and funds escrow | User-held |
@@ -157,7 +157,7 @@ pinned GenVM runner hash so its schema never silently drifts.
   Sepolia, via the relay described in
   [Payments](#payments-base-sepolia-usdc-escrow--relay). Every ledger update still follows
   checks-effects-interactions (fields zeroed and state persisted before the `_send_gen` no-op is even
-  called), which is what the relay's idempotency guard on the Base Sepolia side builds on.
+  called), which the Base escrow mirrors with deterministic settlement ids and per-milestone replay protection.
 - **Lifecycle** — `create_contract` (milestones + acceptance criteria + evidence type per milestone),
   `accept_contract`, `cancel_contract`, all behind a strict state-machine (`DRAFT → FUNDED → ACTIVE →
   COMPLETED/CANCELLED/DISPUTED`).
@@ -239,8 +239,8 @@ Lint: `genvm-lint check contracts/delivera.py` → passes.
 
 The payment layer lives entirely off GenLayer now, on Base Sepolia, in real USDC.
 
-- **`DeliveraEscrow.sol`** (`contracts/base/contracts/DeliveraEscrow.sol`), deployed at
-  **v2 must be freshly deployed; the old v1 address is incompatible**, holds the USDC
+- **`DeliveraEscrow.sol`** (`contracts/base/contracts/DeliveraEscrow.sol`) — the deployed v2 payment
+  contract at `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`; the retired v1 ABI is incompatible. It holds the USDC
   (`0x036CbD53842c5426634e7929541eC2318f3dCF7e` on Base Sepolia). Its functions:
   - `fundEscrow(contractId, freelancer, allocations, deadline, signature)` — called **directly by the client's own wallet** from
     the frontend (an ERC20 `approve` followed by this call — see `fundEscrowOnChain` in
