@@ -28,6 +28,9 @@ jobs:
       - name: Backend typecheck
         working-directory: backend
         run: npm run typecheck
+      - name: Backend tests
+        working-directory: backend
+        run: npm test
 
       - name: Frontend dependencies
         working-directory: frontend
@@ -45,3 +48,5 @@ jobs:
 
       - name: GenLayer Python syntax
         run: python3 -m py_compile contracts/delivera.py
+      - name: GenLayer dispute guard regression
+        run: python3 -m unittest contracts/test_dispute_guards.py

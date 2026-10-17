@@ -115,9 +115,11 @@ Boundary (per GenLayer guidance, adapted for the two-chain split):
 Every wallet-submitted GenLayer transition must reach `FINALIZED` before it is mirrored. An
 `ACCEPTED` result still inside the appeal window cannot authorize Base movement.
 7. REJECTED/NEEDS_REVISION → provider may resubmit (bounded retries).
-8. Either party may dispute; dispute resolution is another validator-consensus AI evaluation over both
-   parties' evidence on GenLayer, producing a basis-point split; the relay then calls `resolveDispute`
-   on Base Sepolia, which pays both shares in real USDC in one call.
+8. Either party may dispute an unpaid submitted/rejected/exhausted milestone. Approved milestones and
+   milestones already settled by arbitration are final: post-payment disputes are rejected so another
+   milestone's allocation can never finance a reversal. Resolution is another validator-consensus AI
+   evaluation over both parties' evidence on GenLayer, producing a basis-point split; the relay then
+   calls `resolveDispute` on Base Sepolia, which pays both shares in real USDC in one call.
 9. Client can cancel unstarted work; any funded-but-unreleased escrow is refunded via the relay calling
    `refund` on Base Sepolia. (Timeout-based recovery for a stalled mid-work contract is not built yet —
    see the README's Known limitations.)
@@ -165,8 +167,9 @@ Base Sepolia. The frontend keeps `formatContractAmount` (18-decimal ledger displ
   attach, Upstash Redis, Tigris via `fly storage create`.
 - GenLayer contract → GenLayer StudioNet via `genlayer` CLI (gasless). After deploy, set
   `GENLAYER_CONTRACT_ADDRESS` secret and redeploy backend.
-- Escrow contract v2 → freshly deploy `DeliveraEscrow.sol` with relayer and decision-authority
-  addresses, then record its address and source commit. The old v1 address is incompatible.
+- Current escrow v2 → `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875` on Base Sepolia; current
+  GenLayer contract → `0xB19331f411618Abb253a01Fa5b457D910c92D8F6` on StudioNet. Future deployments
+  must record both addresses, their receipts, and the exact source commit together.
 
 ## Scaling & Ops
 

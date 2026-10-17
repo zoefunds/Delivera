@@ -73,8 +73,8 @@ caller is the client or the provider, and the detail endpoint returns `403 Forbi
 |---|---|
 | Frontend | https://delivera-frontend.vercel.app |
 | Backend API | Fly.io app `delivera-api-v2` (`/health` for status) — the original `delivera-api` name is stuck on an inaccessible account, so this is the real one despite the mismatched app name in older links |
-| Intelligent contract (adjudication only) | `0x0Cf76bb4202FAe133Fa17F6512c03Eba76f9E7Fe` on GenLayer StudioNet |
-| Escrow contract (holds real value) | `DeliveraEscrow.sol` v2; fresh Base Sepolia deployment required (v1 retired) |
+| Intelligent contract (adjudication only) | `0xB19331f411618Abb253a01Fa5b457D910c92D8F6` on GenLayer StudioNet |
+| Escrow contract (holds real value) | `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875` on Base Sepolia |
 | USDC (Base Sepolia) | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
 
 Historically, before the payment layer moved to Base Sepolia, the GenLayer contract itself moved real
@@ -198,13 +198,16 @@ Lint: `genvm-lint check contracts/delivera.py` → passes.
    `REJECTED`. This step only ever decides the outcome — no money moves yet.
 6. `APPROVED` is written to Postgres; within 30 seconds the relay (`backend/src/jobs/relay.ts`) picks
    it up and calls `releaseMilestone(contractId, amount)` on `DeliveraEscrow.sol`, which pays the
-   milestone amount in real USDC **directly to the provider's wallet**. The resulting tx hash is
-   stored on the milestone row, which doubles as the idempotency guard against relaying twice.
+   milestone amount in real USDC **directly to the provider's wallet**. A deterministic settlement
+   id and per-milestone settled amount are enforced on-chain; the database tx hash is only a mirror.
+   If the process stops after the Base receipt but before that mirror is saved, the next sweep reads
+   the processed id and records a recovered result without sending another payment.
 7. `NEEDS_REVISION` / `REJECTED` lets the provider resubmit, up to a configured attempt cap, after
    which the milestone is `EXHAUSTED`. Every submission's evidence URLs, notes, and timestamp remain
    visible on the contract detail page, alongside the AI's reasoning for each verdict — the full
    history, not just the latest attempt.
-8. Either party can `raise_dispute` on a submitted/approved/rejected/exhausted milestone; each side
+8. Either party can `raise_dispute` on an unpaid submitted/rejected/exhausted milestone; approved or
+   previously arbitrated milestones are final and cannot be disputed again. Each side
    can `add_dispute_statement`; `resolve_dispute` runs consensus AI arbitration over both statements
    and the original evidence on GenLayer, producing a basis-point client/provider split. The relay then
    calls `resolveDispute(contractId, disputedAmount, providerBps)` on Base Sepolia, which pays both
@@ -283,8 +286,10 @@ The payment layer lives entirely off GenLayer now, on Base Sepolia, in real USDC
 - A GenLayer owner/verifier key is used only after a Base funding receipt is independently verified;
   clients cannot directly mark an agreement funded.
 - A Base decision-authority key signs exact, expiring settlement instructions derived from finalized
-  GenLayer state. A separate relayer key transports them. Neither key is a user wallet, and the
-  relayer alone cannot move funds.
+  GenLayer state. A separate relayer key transports them. The roles must use distinct keys and the
+  relayer alone cannot move funds. In the documented testnet demonstration the authority happened to
+  be the same address as the client; production operation should use an isolated authority or a
+  threshold/verified-proof design.
 
 ## Frontend
 

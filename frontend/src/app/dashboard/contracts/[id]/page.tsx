@@ -334,7 +334,9 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                     {busyAction === `approve-${m.index}` ? (busyStage === "chain" ? "Confirming on GenLayer…" : "Approving…") : "Approve manually"}
                   </button>
                 )}
-                {(isClient || isProvider) && chainStatus === "ACTIVE" && status !== "PENDING" && (
+                {(isClient || isProvider) && chainStatus === "ACTIVE" &&
+                  ["SUBMITTED", "NEEDS_REVISION", "REJECTED", "EXHAUSTED"].includes(status) &&
+                  !contract.disputes.some((d) => d.milestoneIndex === m.index && d.status === "RESOLVED") && (
                   <button className="btn-secondary" disabled={!!busyAction}
                     onClick={() => {
                       const reason = prompt("Why are you disputing this milestone?");

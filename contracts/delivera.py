@@ -977,6 +977,8 @@ Return ONLY a JSON object:
         self._require(m["status"] != M_PENDING, "Nothing submitted to dispute")
         self._require(m["status"] != M_APPROVED,
                       "Post-payment disputes are not supported")
+        self._require(int(m.get("settled_atto", "0")) == 0,
+                      "Milestone allocation already settled")
         for d in (json.loads(x) for x in wc.disputes_json):
             self._require(not (d["milestone_index"] == milestone_index and d["status"] == D_OPEN),
                           "An open dispute already exists for this milestone")

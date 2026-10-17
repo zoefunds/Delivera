@@ -7,10 +7,11 @@
  * hooks). Nothing on GenLayer moves money anymore. This job is what
  * actually pays: it polls for decisions that haven't been relayed to the
  * Base Sepolia USDC escrow yet, calls the relevant escrow function, and
- * stamps the resulting tx hash back onto the row so the same decision is
- * never relayed twice — the idempotency guard is the stored *RelayTxHash
- * column itself, so a plain retry sweep over "still null" rows is safe to
- * run on every tick without any separate locking.
+ * mirrors the resulting tx hash back onto the row. The authoritative
+ * idempotency boundary is on-chain: deterministic settlement ids and
+ * per-milestone settlement state prevent a duplicate transfer even if the
+ * process dies after a successful receipt but before PostgreSQL is updated.
+ * A retry first reconciles that on-chain state and records RECOVERED:<id>.
  *
  * Amounts: every Milestone/Contract *Atto column is denominated the same
  * way a milestone amount is entered in the "new contract" form — a decimal
@@ -35,9 +36,9 @@ function attoToUsdcBaseUnits(atto: string | bigint): bigint {
   return value / ATTO_TO_USDC_BASE_UNITS;
 }
 
-/** Relay every APPROVED milestone that hasn't been paid out yet. Safe to
- * call repeatedly: rows with relayTxHash already set are skipped, and a
- * failure on one milestone doesn't stop the others. The freelancer address
+/** Relay every APPROVED milestone that hasn't been mirrored as paid yet.
+ * Safe to call repeatedly: on-chain settlement state is checked before any
+ * broadcast, and a failure on one milestone doesn't stop the others. The freelancer address
  * itself lives on-chain (set once when the client called fundEscrow), so we
  * only need the contractId and the amount here. */
 export async function relayApprovedMilestones(): Promise<{ relayed: string[] }> {
@@ -228,9 +229,9 @@ export async function relayResolvedDisputes(): Promise<{ relayed: string[] }> {
 let tickRunning = false;
 
 /** One sweep across every relay kind. Doubles as both the "just decided"
- * fast path and the retry sweep — every function above only ever acts on
- * rows still missing their relay tx hash, so calling this on an interval is
- * the entire retry strategy. */
+ * fast path and the retry/reconciliation sweep. Rows missing a database hash
+ * are checked against the authoritative on-chain settlement registry before
+ * any replacement transaction is broadcast. */
 export async function runRelaySweep(): Promise<void> {
   if (tickRunning) return;
   tickRunning = true;

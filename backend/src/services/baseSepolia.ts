@@ -92,10 +92,9 @@ export function contractIdToBytes32(chainContractId: string): string {
 
 /**
  * Release `amount` (USDC base units) from a contract's escrow to whichever
- * freelancer address was locked in at fundEscrow time. Callers are
- * responsible for idempotency (only call once per milestone — see
- * jobs/relay.ts, which gates on a stored relayTxHash before ever calling
- * this).
+ * freelancer address was locked in at fundEscrow time. The Solidity contract
+ * is the authoritative idempotency boundary; jobs/relay.ts reconciles its
+ * deterministic settlement id before broadcasting.
  */
 export function settlementId(chainContractId: string, kind: "release" | "dispute" | "refund", index: number): string {
   return ethers.id(`${chainContractId}:${kind}:${index}`);
@@ -189,7 +188,8 @@ export async function isSettlementProcessed(id: string): Promise<boolean> {
 /**
  * Verify that a client-submitted transaction hash is a real, confirmed
  * `EscrowFunded` event on our escrow contract for this contractId, naming
- * the expected freelancer and depositing at least `minAmountUsdc`. Used by
+ * the expected client and freelancer and depositing exactly the expected
+ * amount and allocation vector. Used by
  * the `/fund` route so flipping a contract to FUNDED requires proof of an
  * actual on-chain USDC deposit rather than trusting the caller's claim.
  */
@@ -203,6 +203,28 @@ export async function verifyEscrowFunded(
 ): Promise<{ ok: boolean; amount?: bigint; reason?: string }> {
   if (!config.DELIVERA_ESCROW_ADDRESS) return { ok: false, reason: "escrow not configured" };
   const receipt = await getProvider().getTransactionReceipt(txHash);
+  return verifyEscrowFundingReceipt(
+    receipt,
+    config.DELIVERA_ESCROW_ADDRESS,
+    chainContractId,
+    clientAddress,
+    freelancerAddress,
+    expectedAmountUsdc,
+    expectedAllocations,
+  );
+}
+
+/** Pure receipt validator, exported so adversarial binding cases can be
+ * regression-tested without an RPC connection. */
+export function verifyEscrowFundingReceipt(
+  receipt: Pick<ethers.TransactionReceipt, "status" | "logs"> | null,
+  escrowAddress: string,
+  chainContractId: string,
+  clientAddress: string,
+  freelancerAddress: string,
+  expectedAmountUsdc: bigint,
+  expectedAllocations: bigint[],
+): { ok: boolean; amount?: bigint; reason?: string } {
   if (!receipt || receipt.status !== 1) return { ok: false, reason: "transaction not found or failed" };
   // Deliberately NOT checking receipt.to === escrow address here: some
   // wallets (e.g. MetaMask's transaction relay/"Smart Transactions") submit
@@ -216,7 +238,7 @@ export async function verifyEscrowFunded(
   const key = contractIdToBytes32(chainContractId);
   const iface = new ethers.Interface(DELIVERA_ESCROW_ABI);
   for (const log of receipt.logs) {
-    if (log.address.toLowerCase() !== config.DELIVERA_ESCROW_ADDRESS.toLowerCase()) continue;
+    if (log.address.toLowerCase() !== escrowAddress.toLowerCase()) continue;
     let parsed;
     try {
       parsed = iface.parseLog(log);

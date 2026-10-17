@@ -86,14 +86,22 @@ vercel --prod
 
 Then update `APP_URL`/`CORS_ORIGINS` Fly secrets with the final Vercel domain and `fly deploy` again.
 
-## 5. Wire the contract address
+## 5. Current verified deployments
 
-Deployed contract on StudioNet: `0x1Edb2894d3Cba0148042BCfBdAC6920691967B60`
+- GenLayer StudioNet adjudication contract: `0xB19331f411618Abb253a01Fa5b457D910c92D8F6`
+- Base Sepolia escrow v2: `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`
+- Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+
+These addresses correspond to the funded evidence run in `docs/VERIFICATION.md`.
+For any later deployment, replace both application addresses together and
+record the source commit and deployment receipts.
 
 Whenever the contract is (re)deployed:
 
 ```bash
-fly secrets set --app delivera-api GENLAYER_CONTRACT_ADDRESS="0x1Edb2894d3Cba0148042BCfBdAC6920691967B60"
+fly secrets set --app delivera-api \
+  GENLAYER_CONTRACT_ADDRESS="0xB19331f411618Abb253a01Fa5b457D910c92D8F6" \
+  DELIVERA_ESCROW_ADDRESS="0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875"
 ```
 
 Fly restarts the app automatically. `/health` shows `chain: configured`.
