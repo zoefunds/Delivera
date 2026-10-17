@@ -13,16 +13,22 @@
  * and refund take no address/index arguments of their own.
  */
 export const DELIVERA_ESCROW_ABI = [
-  "function fundEscrow(bytes32 contractId, address freelancer, uint256 amount) external",
-  "function releaseMilestone(bytes32 contractId, uint256 amount) external",
-  "function refund(bytes32 contractId, string calldata reason) external",
-  "function resolveDispute(bytes32 contractId, uint256 disputedAmount, uint256 providerBps) external",
-  "function getEscrow(bytes32 contractId) external view returns (address client, address freelancer, uint256 funded, uint256 released, uint256 refunded, uint8 status)",
+  "function fundEscrow(bytes32 contractId, address freelancer, uint256[] allocations, uint256 deadline, bytes authoritySignature) external",
+  "function releaseMilestone(bytes32 contractId, bytes32 settlementId, uint256 milestoneIndex, uint256 amount, uint256 deadline, bytes authoritySignature) external",
+  "function refund(bytes32 contractId, bytes32 settlementId, uint256 amount, string reason, uint256 deadline, bytes authoritySignature) external",
+  "function resolveDispute(bytes32 contractId, bytes32 settlementId, uint256 milestoneIndex, uint256 disputedAmount, uint256 providerBps, uint256 deadline, bytes authoritySignature) external",
+  "function fundingDigest(bytes32 contractId, address client, address freelancer, uint256[] allocations, uint256 deadline) external view returns (bytes32)",
+  "function settlementDigest(bytes32 settlementId, bytes32 contractId, uint8 action, uint256 milestoneIndex, uint256 amount, uint256 providerBps, uint256 deadline) external view returns (bytes32)",
+  "function processedSettlements(bytes32 settlementId) external view returns (bool)",
+  "function relayer() external view returns (address)",
+  "function decisionAuthority() external view returns (address)",
+  "function milestoneSettled(bytes32 contractId, uint256 milestoneIndex) external view returns (uint256)",
+  "function getEscrow(bytes32 contractId) external view returns (address client, address freelancer, uint256 funded, uint256 released, uint256 refunded, uint256 milestoneCount, uint8 status)",
   "function remainingEscrow(bytes32 contractId) external view returns (uint256)",
-  "event EscrowFunded(bytes32 indexed contractId, address indexed client, address indexed freelancer, uint256 amount)",
-  "event MilestoneReleased(bytes32 indexed contractId, address indexed freelancer, uint256 amount)",
-  "event Refunded(bytes32 indexed contractId, address indexed client, uint256 amount, string reason)",
-  "event DisputeResolved(bytes32 indexed contractId, uint256 disputedAmount, uint256 providerShare, uint256 clientShare, uint256 providerBps)",
+  "event EscrowFunded(bytes32 indexed contractId, address indexed client, address indexed freelancer, uint256 amount, bytes32 allocationHash)",
+  "event MilestoneReleased(bytes32 indexed contractId, bytes32 indexed settlementId, uint256 indexed milestoneIndex, address freelancer, uint256 amount)",
+  "event Refunded(bytes32 indexed contractId, bytes32 indexed settlementId, address indexed client, uint256 amount, string reason)",
+  "event DisputeResolved(bytes32 indexed contractId, bytes32 indexed settlementId, uint256 indexed milestoneIndex, uint256 disputedAmount, uint256 providerShare, uint256 clientShare, uint256 providerBps)",
 ] as const;
 
 export const ERC20_ABI = [

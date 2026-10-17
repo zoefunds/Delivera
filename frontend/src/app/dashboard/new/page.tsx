@@ -92,7 +92,7 @@ export default function NewContractPage() {
       }
 
       setBusyLabel("Sign in your wallet to create the contract on GenLayer…");
-      await genlayerWrite(walletProvider, address, "create_contract", [
+      const txHash = await genlayerWrite(walletProvider, address, "create_contract", [
         providerAddress,
         title,
         description,
@@ -112,6 +112,7 @@ export default function NewContractPage() {
         ...(isWallet ? { providerWalletAddress: provider } : { providerEmail: provider }),
         title,
         description,
+        txHash,
         milestones: chainMilestones,
       });
       router.push(`/dashboard/contracts/${res.contract.id}`);

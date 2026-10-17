@@ -5,7 +5,7 @@ import { AppKitProvider } from "@/components/AppKitProvider";
 export const metadata: Metadata = {
   title: "Delivera — Performance-Based Contracting",
   description:
-    "Escrow that releases itself. Payments unlock only when GenLayer validator consensus verifies the work was actually delivered.",
+    "Milestone USDC escrow on Base Sepolia, settled from finalized GenLayer decisions with signed, replay-protected instructions.",
   icons: {
     icon: "/icon.svg",
   },

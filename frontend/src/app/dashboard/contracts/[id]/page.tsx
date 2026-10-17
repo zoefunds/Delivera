@@ -49,6 +49,9 @@ function PayoutStatus({ relayTxHash, pendingLabel, paidLabel, noopLabel }: {
   if (relayTxHash === "NOOP") {
     return <p className="mt-2 text-xs text-on-surface-variant">{noopLabel}</p>;
   }
+  if (relayTxHash?.startsWith("RECOVERED:")) {
+    return <p className="mt-2 text-xs text-on-surface-variant">Settlement confirmed from the on-chain replay registry after relay recovery.</p>;
+  }
   if (relayTxHash) {
     return (
       <p className="mt-2 flex items-center gap-1 text-xs text-on-surface-variant">
@@ -104,9 +107,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       if (!contract?.chainContractId) throw new Error("Contract has no on-chain id yet");
       if (!walletProvider || !address) throw new Error("Connect your wallet first");
       setBusyStage("chain");
-      await genlayerWrite(walletProvider, address, chainMethod, chainArgs);
+      const txHash = await genlayerWrite(walletProvider, address, chainMethod, chainArgs);
       setBusyStage("confirm");
-      await api.post(path, body);
+      const payload = body && typeof body === "object" ? { ...(body as Record<string, unknown>), txHash } : { txHash };
+      await api.post(path, payload);
       reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Action failed");
@@ -127,7 +131,9 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       if (!walletProvider || !address) throw new Error("Connect your wallet first");
       // Ledger amounts are 18-decimal dollar-equivalent values; the real
       // escrow holds 6-decimal USDC — see formatContractAmount in lib/api.ts.
-      const amountUsdc = BigInt(contract.totalAtto) / 10n ** 12n;
+      const authorization = await api.post<{ deadline: string; signature: string; allocations: string[] }>(
+        `/contracts/${id}/funding-authorization`,
+      );
       setBusyStage("chain");
       const fundTxHash = await fundEscrowOnChain(
         walletProvider,
@@ -135,13 +141,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         contract.escrow.usdcAddress,
         contract.chainContractId,
         contract.provider.walletAddress,
-        amountUsdc,
+        authorization.allocations.map(BigInt),
+        BigInt(authorization.deadline),
+        authorization.signature,
       );
-      // The backend's /fund confirm route requires GenLayer's own
-      // fund_escrow (a status-mirror only — no funds move here) to have
-      // already landed too, so it has something to poll for; nobody signs
-      // this on the user's behalf anymore, so it has to happen here.
-      await genlayerWrite(walletProvider, address, "fund_escrow", [contract.chainContractId]);
       setBusyStage("confirm");
       await api.post(`/contracts/${id}/fund`, { fundTxHash });
       reload();

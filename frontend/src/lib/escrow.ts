@@ -58,7 +58,7 @@ export async function ensureBaseSepolia(eip1193: Eip1193Provider): Promise<void>
 
 /** Must match backend/src/lib/escrowAbi.ts and contracts/base/contracts/DeliveraEscrow.sol exactly. */
 export const DELIVERA_ESCROW_ABI = [
-  "function fundEscrow(bytes32 contractId, address freelancer, uint256 amount) external",
+  "function fundEscrow(bytes32 contractId, address freelancer, uint256[] allocations, uint256 deadline, bytes authoritySignature) external",
   "function remainingEscrow(bytes32 contractId) external view returns (uint256)",
 ] as const;
 
@@ -111,8 +111,11 @@ export async function fundEscrowOnChain(
   usdcAddress: string,
   chainContractId: string,
   freelancerAddress: string,
-  amountUsdc: bigint,
+  allocations: bigint[],
+  deadline: bigint,
+  authoritySignature: string,
 ): Promise<string> {
+  const amountUsdc = allocations.reduce((sum, amount) => sum + amount, 0n);
   await ensureBaseSepolia(eip1193);
   const browserProvider = new BrowserProvider(eip1193 as ConstructorParameters<typeof BrowserProvider>[0]);
   const signer = await browserProvider.getSigner();
@@ -128,7 +131,7 @@ export async function fundEscrowOnChain(
 
   const escrow = new Contract(escrowAddress, DELIVERA_ESCROW_ABI, signer);
   const key = contractIdToBytes32(chainContractId);
-  const tx = await escrow.fundEscrow(key, freelancerAddress, amountUsdc);
+  const tx = await escrow.fundEscrow(key, freelancerAddress, allocations, deadline, authoritySignature);
   const receipt = await tx.wait();
   assertConfirmed(receipt, "fundEscrow");
   return tx.hash as string;

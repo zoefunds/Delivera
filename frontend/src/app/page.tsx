@@ -33,8 +33,8 @@ const steps = [
 const features = [
   {
     icon: "lock",
-    title: "Trustless escrow",
-    body: "Funds sit in a GenLayer Intelligent Contract, not our bank account. Neither party can pull them out unilaterally.",
+    title: "USDC escrow with constrained settlement",
+    body: "Funds sit in a Solidity escrow on Base Sepolia. Payouts require both a finalized GenLayer-derived authority signature and the transport relayer, with milestone allocations and replay IDs enforced on-chain.",
   },
   {
     icon: "neurology",
@@ -111,7 +111,7 @@ export default function Landing() {
         <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-on-surface-variant">
           Delivera locks payment in on-chain escrow and releases it only when independent AI validators
           verify — against your live deliverables — that the agreed work was completed. No chasing
-          invoices. No he-said-she-said. No trusted middleman.
+          invoices. The current testnet architecture uses an explicitly disclosed decision-attestation service to bridge finalized GenLayer outcomes to Base Sepolia.
         </p>
         <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
           <Link href="/login" className="btn-primary px-8 py-4 text-base shadow-glow">

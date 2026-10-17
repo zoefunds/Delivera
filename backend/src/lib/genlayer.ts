@@ -1,10 +1,11 @@
 /**
- * GenLayer client — signs contract reads/writes with the user's custodial
- * wallet via genlayer-js against StudioNet.
+ * GenLayer client for server-side reads, finality checks, and the narrowly
+ * scoped owner/verifier funding write. Ordinary lifecycle writes are signed
+ * by the user's connected wallet in the frontend.
  */
 import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
-import type { Address, CalldataEncodable, TransactionStatus } from "genlayer-js/types";
+import type { Address, CalldataEncodable, Hash, TransactionStatus } from "genlayer-js/types";
 import { config } from "../config.js";
 import { logger } from "./logger.js";
 
@@ -23,6 +24,18 @@ export async function readContract(method: string, args: unknown[]): Promise<unk
     address: config.GENLAYER_CONTRACT_ADDRESS as Address,
     functionName: method,
     args: args as CalldataEncodable[],
+  });
+}
+
+/** Require the wallet-submitted GenLayer transaction to be beyond the appeal
+ * window before any state derived from it can authorize a Base settlement. */
+export async function waitForFinalizedTransaction(txHash: string): Promise<void> {
+  const client = clientFor();
+  await client.waitForTransactionReceipt({
+    hash: txHash as Hash,
+    status: "FINALIZED" as TransactionStatus,
+    retries: 200,
+    interval: 3000,
   });
 }
 

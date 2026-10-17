@@ -22,6 +22,8 @@ import { DELIVERA_ESCROW_ABI, ERC20_ABI } from "../lib/escrowAbi.js";
 let provider: ethers.JsonRpcProvider | null = null;
 let relayerWallet: ethers.Wallet | null = null;
 let escrowContract: ethers.Contract | null = null;
+let authorityWallet: ethers.Wallet | null = null;
+let keyConfigurationVerified = false;
 
 function getProvider(): ethers.JsonRpcProvider {
   if (!provider) {
@@ -31,7 +33,13 @@ function getProvider(): ethers.JsonRpcProvider {
 }
 
 export function isEscrowConfigured(): boolean {
-  return Boolean(config.DELIVERA_ESCROW_ADDRESS && config.BASE_SEPOLIA_RELAYER_PRIVATE_KEY);
+  return Boolean(config.DELIVERA_ESCROW_ADDRESS && config.BASE_SEPOLIA_RELAYER_PRIVATE_KEY && config.BASE_SEPOLIA_DECISION_AUTHORITY_PRIVATE_KEY);
+}
+
+function getAuthorityWallet(): ethers.Wallet {
+  if (!config.BASE_SEPOLIA_DECISION_AUTHORITY_PRIVATE_KEY) throw new Error("BASE_SEPOLIA_DECISION_AUTHORITY_PRIVATE_KEY is not configured");
+  authorityWallet ??= new ethers.Wallet(config.BASE_SEPOLIA_DECISION_AUTHORITY_PRIVATE_KEY);
+  return authorityWallet;
 }
 
 function getRelayerContract(): ethers.Contract {
@@ -56,6 +64,24 @@ function getReadContract(): ethers.Contract {
   return new ethers.Contract(config.DELIVERA_ESCROW_ADDRESS, DELIVERA_ESCROW_ABI, getProvider());
 }
 
+async function assertEscrowKeyConfiguration(): Promise<void> {
+  if (keyConfigurationVerified) return;
+  const read = getReadContract();
+  const relayer = new ethers.Wallet(config.BASE_SEPOLIA_RELAYER_PRIVATE_KEY).address;
+  const authority = getAuthorityWallet().address;
+  const [configuredRelayer, configuredAuthority] = await Promise.all([read.relayer(), read.decisionAuthority()]);
+  if ((configuredRelayer as string).toLowerCase() !== relayer.toLowerCase()) {
+    throw new Error("configured relayer key does not match DeliveraEscrow.relayer()");
+  }
+  if ((configuredAuthority as string).toLowerCase() !== authority.toLowerCase()) {
+    throw new Error("configured decision-authority key does not match DeliveraEscrow.decisionAuthority()");
+  }
+  if (relayer.toLowerCase() === authority.toLowerCase()) {
+    throw new Error("relayer and decision authority must be distinct keys");
+  }
+  keyConfigurationVerified = true;
+}
+
 /** GenLayer chainContractId values are opaque strings; the escrow contract
  * keys balances by bytes32, so hash the id deterministically the same way
  * everywhere it's used (backend and frontend both call this — see
@@ -71,10 +97,32 @@ export function contractIdToBytes32(chainContractId: string): string {
  * jobs/relay.ts, which gates on a stored relayTxHash before ever calling
  * this).
  */
-export async function releaseMilestone(chainContractId: string, amountUsdc: bigint): Promise<string> {
+export function settlementId(chainContractId: string, kind: "release" | "dispute" | "refund", index: number): string {
+  return ethers.id(`${chainContractId}:${kind}:${index}`);
+}
+
+async function signSettlement(chainContractId: string, id: string, action: number, index: bigint, amount: bigint, bps: bigint) {
+  await assertEscrowKeyConfiguration();
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+  const digest = await getReadContract().settlementDigest(id, contractIdToBytes32(chainContractId), action, index, amount, bps, deadline);
+  return { deadline, signature: await getAuthorityWallet().signMessage(ethers.getBytes(digest)) };
+}
+
+export async function createFundingAuthorization(
+  chainContractId: string, client: string, freelancer: string, allocations: bigint[],
+): Promise<{ deadline: string; signature: string }> {
+  await assertEscrowKeyConfiguration();
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800);
+  const digest = await getReadContract().fundingDigest(contractIdToBytes32(chainContractId), client, freelancer, allocations, deadline);
+  return { deadline: deadline.toString(), signature: await getAuthorityWallet().signMessage(ethers.getBytes(digest)) };
+}
+
+export async function releaseMilestone(chainContractId: string, milestoneIndex: number, amountUsdc: bigint): Promise<{ txHash: string; settlementId: string }> {
   const contract = getRelayerContract();
   const key = contractIdToBytes32(chainContractId);
-  const tx = await contract.releaseMilestone(key, amountUsdc);
+  const id = settlementId(chainContractId, "release", milestoneIndex);
+  const auth = await signSettlement(chainContractId, id, 1, BigInt(milestoneIndex), amountUsdc, 10_000n);
+  const tx = await contract.releaseMilestone(key, id, milestoneIndex, amountUsdc, auth.deadline, auth.signature);
   logger.info(
     { chainContractId, amount: amountUsdc.toString(), txHash: tx.hash },
     "relaying milestone release to Base Sepolia escrow",
@@ -83,7 +131,7 @@ export async function releaseMilestone(chainContractId: string, amountUsdc: bigi
   if (!receipt || receipt.status !== 1) {
     throw new Error(`releaseMilestone transaction failed for contract ${chainContractId}`);
   }
-  return tx.hash as string;
+  return { txHash: tx.hash as string, settlementId: id };
 }
 
 /**
@@ -91,16 +139,18 @@ export async function releaseMilestone(chainContractId: string, amountUsdc: bigi
  * that funded it (the contract itself tracks who that was). Same
  * idempotency contract as releaseMilestone.
  */
-export async function refund(chainContractId: string, reason: string): Promise<string> {
+export async function refund(chainContractId: string, amount: bigint, reason: string): Promise<{ txHash: string; settlementId: string }> {
   const contract = getRelayerContract();
   const key = contractIdToBytes32(chainContractId);
-  const tx = await contract.refund(key, reason);
+  const id = settlementId(chainContractId, "refund", 0);
+  const auth = await signSettlement(chainContractId, id, 3, ethers.MaxUint256, amount, 0n);
+  const tx = await contract.refund(key, id, amount, reason, auth.deadline, auth.signature);
   logger.info({ chainContractId, reason, txHash: tx.hash }, "relaying refund to Base Sepolia escrow");
   const receipt = await tx.wait();
   if (!receipt || receipt.status !== 1) {
     throw new Error(`refund transaction failed for contract ${chainContractId}`);
   }
-  return tx.hash as string;
+  return { txHash: tx.hash as string, settlementId: id };
 }
 
 /**
@@ -111,12 +161,16 @@ export async function refund(chainContractId: string, reason: string): Promise<s
  */
 export async function resolveDispute(
   chainContractId: string,
+  disputeIndex: number,
+  milestoneIndex: number,
   disputedAmountUsdc: bigint,
   providerBps: bigint,
-): Promise<string> {
+): Promise<{ txHash: string; settlementId: string }> {
   const contract = getRelayerContract();
   const key = contractIdToBytes32(chainContractId);
-  const tx = await contract.resolveDispute(key, disputedAmountUsdc, providerBps);
+  const id = settlementId(chainContractId, "dispute", disputeIndex);
+  const auth = await signSettlement(chainContractId, id, 2, BigInt(milestoneIndex), disputedAmountUsdc, providerBps);
+  const tx = await contract.resolveDispute(key, id, milestoneIndex, disputedAmountUsdc, providerBps, auth.deadline, auth.signature);
   logger.info(
     { chainContractId, disputedAmount: disputedAmountUsdc.toString(), providerBps: providerBps.toString(), txHash: tx.hash },
     "relaying dispute resolution to Base Sepolia escrow",
@@ -125,7 +179,11 @@ export async function resolveDispute(
   if (!receipt || receipt.status !== 1) {
     throw new Error(`resolveDispute transaction failed for contract ${chainContractId}`);
   }
-  return tx.hash as string;
+  return { txHash: tx.hash as string, settlementId: id };
+}
+
+export async function isSettlementProcessed(id: string): Promise<boolean> {
+  return Boolean(await getReadContract().processedSettlements(id));
 }
 
 /**
@@ -138,8 +196,10 @@ export async function resolveDispute(
 export async function verifyEscrowFunded(
   chainContractId: string,
   txHash: string,
+  clientAddress: string,
   freelancerAddress: string,
-  minAmountUsdc: bigint,
+  expectedAmountUsdc: bigint,
+  expectedAllocations: bigint[],
 ): Promise<{ ok: boolean; amount?: bigint; reason?: string }> {
   if (!config.DELIVERA_ESCROW_ADDRESS) return { ok: false, reason: "escrow not configured" };
   const receipt = await getProvider().getTransactionReceipt(txHash);
@@ -165,12 +225,19 @@ export async function verifyEscrowFunded(
     }
     if (parsed?.name !== "EscrowFunded") continue;
     if (parsed.args.contractId !== key) continue;
+    if ((parsed.args.client as string).toLowerCase() !== clientAddress.toLowerCase()) {
+      return { ok: false, reason: "funding wallet does not match the registered GenLayer client" };
+    }
     if ((parsed.args.freelancer as string).toLowerCase() !== freelancerAddress.toLowerCase()) {
       return { ok: false, reason: "freelancer address on-chain does not match this contract's provider" };
     }
     const amount = parsed.args.amount as bigint;
-    if (amount < minAmountUsdc) {
-      return { ok: false, reason: `deposited amount ${amount} is less than expected ${minAmountUsdc}` };
+    if (amount !== expectedAmountUsdc) {
+      return { ok: false, reason: `deposited amount ${amount} does not equal expected ${expectedAmountUsdc}` };
+    }
+    const expectedAllocationHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["uint256[]"], [expectedAllocations]));
+    if ((parsed.args.allocationHash as string).toLowerCase() !== expectedAllocationHash.toLowerCase()) {
+      return { ok: false, reason: "on-chain milestone allocation commitment does not match the agreement" };
     }
     return { ok: true, amount };
   }

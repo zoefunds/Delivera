@@ -1,44 +1,52 @@
-# Delivera — REST API (v1)
+# Delivera REST API (v1)
 
-Base: `/api/v1`. JSON only. Auth: `Authorization: Bearer <access JWT>`; refresh token in httpOnly cookie. Errors: `{ "error": { "code", "message", "details?" } }`. Rate limits (Redis): 100 req/min authed, 20 req/min anon, 5 req/15min for auth endpoints.
+Base path: `/api/v1`. Authentication uses a wallet-signed nonce, a short-lived
+bearer JWT, and a rotating httpOnly refresh cookie. Errors use
+`{ "error": { "code", "message" } }`.
 
-## Auth
-| Method | Path | Description |
+## Authentication and wallet
+
+| Method | Path | Purpose |
 |---|---|---|
-| POST | /auth/register | email, password, name, role → creates user + custodial wallet, sends Brevo verification email |
-| POST | /auth/verify-email | token → marks verified |
-| POST | /auth/login | email, password → access token + refresh cookie |
-| POST | /auth/refresh | rotate refresh token |
-| POST | /auth/logout | revoke session |
-| POST | /auth/forgot-password | email → Brevo reset link (always 200) |
-| POST | /auth/reset-password | token, newPassword → revokes all sessions |
-| GET | /auth/me | current user + wallet address |
+| GET | `/auth/nonce?address=0x…` | Obtain a one-time login challenge |
+| POST | `/auth/verify` | Verify the wallet signature and create/login the account |
+| POST | `/auth/refresh` | Rotate the refresh session |
+| POST | `/auth/logout` | Revoke the session |
+| GET | `/auth/me` | Current wallet-backed identity |
+| GET | `/wallet` | Connected address and live Base Sepolia USDC balance |
 
-## Wallet
-| POST | /wallet/export | password re-auth → one-time private key reveal (audit-logged) |
-| GET | /wallet | address + on-chain balances |
+There is no email/password registration, password reset, custodial user key,
+or wallet-export endpoint in the current architecture.
 
-## Projects & Contracts
-| GET/POST | /projects | list/create |
-| GET/PATCH/DELETE | /projects/:id | manage (owner only) |
-| POST | /contracts | create on-chain contract (milestones[], provider email or address, criteria) → tx |
-| GET | /contracts | list mine (client or provider), filter by status |
-| GET | /contracts/:id | full detail incl. chain state (Redis-cached) |
-| POST | /contracts/:id/fund | fund escrow |
-| POST | /contracts/:id/accept | provider accepts |
-| POST | /contracts/:id/cancel | cancel per contract rules |
-| POST | /contracts/:id/milestones/:index/submit | evidence_urls[], notes → on-chain submission |
-| POST | /contracts/:id/milestones/:index/verify | trigger AI verification tx |
-| POST | /contracts/:id/milestones/:index/approve | client manual approve (skips AI) |
-| POST | /contracts/:id/disputes | raise dispute with evidence |
-| POST | /contracts/:id/disputes/resolve | trigger on-chain AI dispute resolution |
-| POST | /contracts/:id/withdraw | provider withdraws released funds |
-| GET | /contracts/:id/evaluations | AI evaluation + consensus history |
+## Contracts
 
-## Misc
-| POST | /attachments (multipart) → Tigris S3, returns signed URL |
-| GET/PATCH | /notifications, /notifications/:id/read |
-| POST | /reviews | rate counterparty after completion |
-| GET | /health, /metrics |
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/contracts/resolve-provider` | Resolve an optional provider email to a wallet |
+| POST | `/contracts/confirm-create` | Mirror a wallet-signed GenLayer creation |
+| GET | `/contracts` | List agreements for the authenticated party |
+| GET | `/contracts/:id` | Agreement, milestones, disputes, chain and escrow metadata |
+| POST | `/contracts/:id/funding-authorization` | Sign the exact client/provider/id/allocation binding; draft client only |
+| POST | `/contracts/:id/fund` | Verify the Base receipt, record GenLayer funding through the owner/verifier, and mirror it |
+| POST | `/contracts/:id/accept` | Confirm a provider-signed GenLayer acceptance |
+| POST | `/contracts/:id/cancel` | Confirm cancellation; relay later submits the signed exact refund |
+| POST | `/contracts/:id/milestones/:index/submit` | Confirm provider evidence submission |
+| POST | `/contracts/:id/milestones/:index/verify` | Confirm consensus verification |
+| POST | `/contracts/:id/milestones/:index/approve` | Confirm client manual approval |
+| POST | `/contracts/:id/disputes` | Confirm an unpaid-milestone dispute |
+| POST | `/contracts/:id/disputes/:index/statement` | Confirm a party statement |
+| POST | `/contracts/:id/disputes/:index/resolve` | Confirm finalized arbitration |
+| GET | `/contracts/:id/evaluations` | GenLayer evaluation/audit history |
 
-Versioning: URI (`/v1`). Breaking changes → `/v2`. All writes idempotent via optional `Idempotency-Key` header (Redis, 24h).
+Except for the funding-verifier step, lifecycle writes are signed by the
+user's connected wallet before these endpoints confirm and mirror them.
+Post-payment disputes are intentionally rejected; a paid allocation cannot be
+reversed using another milestone's funds.
+
+## Relay guarantees
+
+The relay derives deterministic settlement ids from the GenLayer contract id,
+action, and milestone/dispute index. Before retrying a row with no saved tx
+hash it checks `processedSettlements` on Base, reconciles an already-executed
+instruction, and updates the row plus accounting atomically. Solidity remains
+the authoritative replay and allocation boundary.

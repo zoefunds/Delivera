@@ -26,7 +26,7 @@
  */
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
-import { isEscrowConfigured, releaseMilestone, refund, resolveDispute, getRemainingEscrow } from "../services/baseSepolia.js";
+import { isEscrowConfigured, releaseMilestone, refund, resolveDispute, getRemainingEscrow, isSettlementProcessed, settlementId } from "../services/baseSepolia.js";
 
 const ATTO_TO_USDC_BASE_UNITS = 10n ** 12n; // 1e18 -> 1e6
 
@@ -54,20 +54,23 @@ export async function relayApprovedMilestones(): Promise<{ relayed: string[] }> 
     if (!contract.chainContractId) continue;
     try {
       const amount = attoToUsdcBaseUnits(milestone.amountAtto.toString());
-      const txHash = await releaseMilestone(contract.chainContractId, amount);
-      await prisma.milestone.update({ where: { id: milestone.id }, data: { relayTxHash: txHash } });
-      await prisma.contract.update({
-        where: { id: contract.id },
-        data: { releasedAtto: (BigInt(contract.releasedAtto.toString()) + BigInt(milestone.amountAtto.toString())).toString() },
+      const sid = settlementId(contract.chainContractId, "release", milestone.index);
+      const recovered = await isSettlementProcessed(sid);
+      const result = recovered ? { txHash: `RECOVERED:${sid}`, settlementId: sid } : await releaseMilestone(contract.chainContractId, milestone.index, amount);
+      const claimed = await prisma.$transaction(async (db) => {
+        const row = await db.milestone.updateMany({ where: { id: milestone.id, relayTxHash: null }, data: { relayTxHash: result.txHash } });
+        if (row.count === 1) await db.contract.update({ where: { id: contract.id }, data: { releasedAtto: { increment: milestone.amountAtto } } });
+        return row;
       });
+      if (claimed.count === 0) continue;
       await prisma.transaction.create({
         data: {
           userId: contract.providerId ?? contract.clientId,
           contractId: contract.id,
           kind: "base_relay_release",
-          txHash,
+          txHash: recovered ? null : result.txHash,
           status: "CONFIRMED",
-          payload: { milestoneIndex: milestone.index, amount: amount.toString() },
+          payload: { milestoneIndex: milestone.index, amount: amount.toString(), settlementId: sid, recovered },
         },
       });
       relayed.push(milestone.id);
@@ -98,13 +101,19 @@ export async function relayApprovedMilestones(): Promise<{ relayed: string[] }> 
 export async function relayCancelledRefunds(): Promise<{ relayed: string[] }> {
   if (!isEscrowConfigured()) return { relayed: [] };
   const candidates = await prisma.contract.findMany({
-    where: { status: "CANCELLED", refundRelayTxHash: null, chainContractId: { not: null } },
+    where: { status: { in: ["CANCELLED", "COMPLETED"] }, refundRelayTxHash: null, chainContractId: { not: null } },
+    include: { milestones: true },
     take: 25,
   });
 
   const relayed: string[] = [];
   for (const contract of candidates) {
     if (!contract.chainContractId) continue;
+    const sid = settlementId(contract.chainContractId, "refund", 0);
+    const recovered = await isSettlementProcessed(sid).catch(() => false);
+    const expectedRefund = contract.milestones
+      .filter((m) => m.relayTxHash === null)
+      .reduce((sum, m) => sum + attoToUsdcBaseUnits(m.amountAtto.toString()), 0n);
     let remainingOnChain: bigint;
     try {
       remainingOnChain = BigInt(await getRemainingEscrow(contract.chainContractId));
@@ -112,28 +121,32 @@ export async function relayCancelledRefunds(): Promise<{ relayed: string[] }> {
       logger.error({ contractId: contract.id, err: (err as Error).message }, "could not read remaining escrow; will retry next sweep");
       continue;
     }
-    if (remainingOnChain <= 0n) {
+    if (remainingOnChain <= 0n && !recovered) {
       // Nothing left on-chain, but still mark it so the sweep stops revisiting it.
       await prisma.contract.update({ where: { id: contract.id }, data: { refundRelayTxHash: "NOOP" } });
       continue;
     }
     try {
-      const txHash = await refund(contract.chainContractId, "contract_cancelled");
+      if (!recovered && remainingOnChain !== expectedRefund) {
+        throw new Error(`on-chain remaining ${remainingOnChain} does not match unsettled allocation total ${expectedRefund}`);
+      }
+      const refundAmount = recovered ? expectedRefund : remainingOnChain;
+      const result = recovered ? { txHash: `RECOVERED:${sid}`, settlementId: sid } : await refund(contract.chainContractId, refundAmount, "contract_cancelled");
       // Postgres's *Atto columns are 1e18-scaled; the on-chain amount just
       // refunded is 1e6 USDC base units — scale back up for the mirror.
-      const refundedAttoDelta = remainingOnChain * ATTO_TO_USDC_BASE_UNITS;
+      const refundedAttoDelta = refundAmount * ATTO_TO_USDC_BASE_UNITS;
       await prisma.contract.update({
         where: { id: contract.id },
-        data: { refundRelayTxHash: txHash, refundedAtto: (BigInt(contract.refundedAtto.toString()) + refundedAttoDelta).toString() },
+        data: { refundRelayTxHash: result.txHash, refundedAtto: (BigInt(contract.refundedAtto.toString()) + refundedAttoDelta).toString() },
       });
       await prisma.transaction.create({
         data: {
           userId: contract.clientId,
           contractId: contract.id,
           kind: "base_relay_refund",
-          txHash,
+          txHash: recovered ? null : result.txHash,
           status: "CONFIRMED",
-          payload: { amount: remainingOnChain.toString(), reason: "contract_cancelled" },
+          payload: { amount: refundAmount.toString(), reason: "contract_cancelled", settlementId: sid, recovered },
         },
       });
       relayed.push(contract.id);
@@ -163,38 +176,45 @@ export async function relayResolvedDisputes(): Promise<{ relayed: string[] }> {
   for (const dispute of disputes) {
     const { contract } = dispute;
     if (!contract.chainContractId) continue;
-    let remainingOnChain: bigint;
-    try {
-      remainingOnChain = BigInt(await getRemainingEscrow(contract.chainContractId));
-    } catch (err) {
-      logger.error({ disputeId: dispute.id, err: (err as Error).message }, "could not read remaining escrow; will retry next sweep");
-      continue;
-    }
-    if (remainingOnChain <= 0n) {
-      await prisma.dispute.update({ where: { id: dispute.id }, data: { relayTxHash: "NOOP" } });
-      continue;
-    }
+    const milestone = await prisma.milestone.findUnique({ where: { contractId_index: { contractId: contract.id, index: dispute.milestoneIndex } } });
+    if (!milestone) continue;
+    // Never use the contract-wide remaining balance here. GenLayer resolves
+    // exactly this unpaid milestone, and the Base contract independently
+    // enforces the same immutable allocation.
+    const disputedAmount = attoToUsdcBaseUnits(milestone.amountAtto.toString());
     const providerBps = BigInt(dispute.providerBps ?? 0);
-    const providerShareUsdc = (remainingOnChain * providerBps) / 10_000n;
-    const clientShareUsdc = remainingOnChain - providerShareUsdc;
+    const providerShareUsdc = (disputedAmount * providerBps) / 10_000n;
+    const clientShareUsdc = disputedAmount - providerShareUsdc;
     try {
-      const txHash = await resolveDispute(contract.chainContractId, remainingOnChain, providerBps);
-      await prisma.dispute.update({ where: { id: dispute.id }, data: { relayTxHash: txHash } });
-      await prisma.contract.update({
-        where: { id: contract.id },
-        data: {
-          releasedAtto: (BigInt(contract.releasedAtto.toString()) + providerShareUsdc * ATTO_TO_USDC_BASE_UNITS).toString(),
-          refundedAtto: (BigInt(contract.refundedAtto.toString()) + clientShareUsdc * ATTO_TO_USDC_BASE_UNITS).toString(),
-        },
+      const disputeIndex = dispute.chainDisputeIndex ?? dispute.milestoneIndex;
+      const sid = settlementId(contract.chainContractId, "dispute", disputeIndex);
+      const recovered = await isSettlementProcessed(sid);
+      const result = recovered
+        ? { txHash: `RECOVERED:${sid}`, settlementId: sid }
+        : await resolveDispute(contract.chainContractId, disputeIndex, dispute.milestoneIndex, disputedAmount, providerBps);
+      const claimed = await prisma.$transaction(async (db) => {
+        const row = await db.dispute.updateMany({ where: { id: dispute.id, relayTxHash: null }, data: { relayTxHash: result.txHash } });
+        if (row.count === 1) {
+          await db.milestone.update({ where: { id: milestone.id }, data: { relayTxHash: result.txHash } });
+          await db.contract.update({
+            where: { id: contract.id },
+            data: {
+              releasedAtto: { increment: (providerShareUsdc * ATTO_TO_USDC_BASE_UNITS).toString() },
+              refundedAtto: { increment: (clientShareUsdc * ATTO_TO_USDC_BASE_UNITS).toString() },
+            },
+          });
+        }
+        return row;
       });
+      if (claimed.count === 0) continue;
       await prisma.transaction.create({
         data: {
           userId: contract.providerId ?? contract.clientId,
           contractId: contract.id,
           kind: "base_relay_dispute_resolution",
-          txHash,
+          txHash: recovered ? null : result.txHash,
           status: "CONFIRMED",
-          payload: { disputedAmount: remainingOnChain.toString(), providerBps: providerBps.toString() },
+          payload: { milestoneIndex: dispute.milestoneIndex, disputedAmount: disputedAmount.toString(), providerBps: providerBps.toString(), settlementId: sid, recovered },
         },
       });
       relayed.push(dispute.id);
@@ -215,11 +235,11 @@ export async function runRelaySweep(): Promise<void> {
   if (tickRunning) return;
   tickRunning = true;
   try {
-    const [milestones, cancellations, disputes] = await Promise.all([
-      relayApprovedMilestones(),
-      relayCancelledRefunds(),
-      relayResolvedDisputes(),
-    ]);
+    // Run settlement kinds sequentially so two different decisions for the
+    // same agreement cannot race each other in the same process tick.
+    const milestones = await relayApprovedMilestones();
+    const disputes = await relayResolvedDisputes();
+    const cancellations = await relayCancelledRefunds();
     if (milestones.relayed.length || cancellations.relayed.length || disputes.relayed.length) {
       logger.info(
         { milestones: milestones.relayed.length, cancellations: cancellations.relayed.length, disputes: disputes.relayed.length },

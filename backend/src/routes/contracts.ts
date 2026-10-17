@@ -15,12 +15,12 @@ import { rateLimit } from "../plugins/rateLimit.js";
 import { audit } from "../lib/audit.js";
 import { email } from "../lib/email.js";
 import { cached, invalidate } from "../lib/redis.js";
-import { contractConfigured, readContract, readUntilFound } from "../lib/genlayer.js";
+import { contractConfigured, readContract, readUntilFound, waitForFinalizedTransaction, writeContract } from "../lib/genlayer.js";
 import { config } from "../config.js";
-import { isEscrowConfigured, verifyEscrowFunded } from "../services/baseSepolia.js";
+import { createFundingAuthorization, isEscrowConfigured, verifyEscrowFunded } from "../services/baseSepolia.js";
 
 const writeLimit = rateLimit({ max: 20, windowSec: 60, keyPrefix: "chain-write" });
-const confirmTxSchema = z.object({ txHash: z.string().optional() });
+const confirmTxSchema = z.object({ txHash: z.string().min(1) });
 
 const milestoneSchema = z.object({
   title: z.string().min(1).max(200),
@@ -39,6 +39,7 @@ const createSchema = z
     providerWalletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
     title: z.string().min(1).max(200),
     description: z.string().max(8000).default(""),
+    txHash: z.string().min(1),
     milestones: z.array(milestoneSchema).min(1).max(20),
   })
   .refine((b) => Boolean(b.providerEmail || b.providerWalletAddress), {
@@ -169,6 +170,12 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
   app.post("/confirm-create", { preHandler: [writeLimit] }, async (req, reply) => {
     if (!requireChain(reply)) return;
     const body = createSchema.parse(req.body);
+
+    try {
+      await waitForFinalizedTransaction(body.txHash);
+    } catch (err) {
+      return reply.code(409).send({ error: { code: "NOT_FINALIZED", message: (err as Error).message } });
+    }
 
     const client = await prisma.user.findUniqueOrThrow({ where: { id: req.user!.id } });
     if (!client.walletAddress) {
@@ -317,6 +324,7 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
       after?: (result: T) => Promise<void>;
       retries?: number;
       interval?: number;
+      requireFinalized?: boolean;
     },
   ) {
     if (!requireChain(reply)) return;
@@ -329,6 +337,20 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
     if (!allowed) return reply.code(403).send({ error: { code: "FORBIDDEN", message: "Not allowed for your role" } });
     if (!contract.chainContractId) {
       return reply.code(409).send({ error: { code: "NOT_ON_CHAIN", message: "Contract has no chain id" } });
+    }
+
+    let txHash: string | undefined;
+    if (opts.requireFinalized !== false) {
+      const parsed = confirmTxSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ error: { code: "TX_HASH_REQUIRED", message: "The wallet-signed GenLayer transaction hash is required" } });
+      }
+      txHash = parsed.data.txHash;
+      try {
+        await waitForFinalizedTransaction(txHash);
+      } catch (err) {
+        return reply.code(409).send({ error: { code: "NOT_FINALIZED", message: (err as Error).message } });
+      }
     }
 
     let value: T;
@@ -345,7 +367,6 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
-    const { txHash } = confirmTxSchema.parse(req.body ?? {});
     await recordTx(req, contract.id, opts.kind, { txHash, status: "CONFIRMED" });
     await invalidate(`chain:${contract.chainContractId}`);
     if (opts.after) await opts.after(value);
@@ -354,6 +375,28 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
 
   // ---- lifecycle actions ---------------------------------------------
   const fundSchema = z.object({ fundTxHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/) });
+
+  // Produces a short-lived authority signature over the exact immutable
+  // GenLayer/DB agreement. The Base contract also binds it to msg.sender,
+  // preventing public-id pre-funding and field substitution.
+  app.post("/:id/funding-authorization", { preHandler: [writeLimit] }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { contract, isClient } = await loadParty(req, id);
+    if (!contract) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Contract not found" } });
+    if (!isClient || !req.user!.walletAddress) return reply.code(403).send({ error: { code: "FORBIDDEN", message: "Only the registered client wallet can fund" } });
+    if (!contract.chainContractId || !contract.provider?.walletAddress) return reply.code(409).send({ error: { code: "INCOMPLETE_BINDING", message: "Contract parties are not fully bound" } });
+    if (contract.status !== "DRAFT") return reply.code(409).send({ error: { code: "BAD_STATUS", message: "Only a draft contract can be funded" } });
+    if (!isEscrowConfigured()) return reply.code(503).send({ error: { code: "ESCROW_NOT_CONFIGURED", message: "Base Sepolia escrow is not configured" } });
+    const milestoneAtto = contract.milestones.sort((a, b) => a.index - b.index).map((m) => BigInt(m.amountAtto.toString()));
+    if (milestoneAtto.some((amount) => amount % 10n ** 12n !== 0n)) {
+      return reply.code(409).send({ error: { code: "UNREPRESENTABLE_USDC_AMOUNT", message: "Every milestone must resolve exactly to 6-decimal USDC units" } });
+    }
+    const allocations = milestoneAtto.map((amount) => amount / 10n ** 12n);
+    const authorization = await createFundingAuthorization(
+      contract.chainContractId, req.user!.walletAddress, contract.provider.walletAddress, allocations,
+    );
+    return { ...authorization, allocations: allocations.map(String) };
+  });
 
   app.post("/:id/fund", { preHandler: [writeLimit] }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
@@ -372,20 +415,39 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
     // backend) — this only verifies that deposit actually landed on-chain
     // before mirroring FUNDED, so a client can't fake funding by just calling
     // this endpoint with a bogus or unrelated tx hash.
-    const expectedUsdc = BigInt(contract.totalAtto.toString()) / 10n ** 12n;
-    const verified = await verifyEscrowFunded(contract.chainContractId!, fundTxHash, contract.provider.walletAddress, expectedUsdc)
+    const expectedAllocations = contract.milestones
+      .sort((a, b) => a.index - b.index)
+      .map((milestone) => BigInt(milestone.amountAtto.toString()) / 10n ** 12n);
+    const expectedUsdc = expectedAllocations.reduce((sum, amount) => sum + amount, 0n);
+    const verified = await verifyEscrowFunded(
+      contract.chainContractId!, fundTxHash, req.user!.walletAddress!,
+      contract.provider.walletAddress, expectedUsdc, expectedAllocations,
+    )
       .catch((err) => ({ ok: false as const, reason: (err as Error).message }));
     if (!verified.ok) {
       return reply.code(400).send({ error: { code: "FUNDING_NOT_VERIFIED", message: verified.reason ?? "Could not verify on-chain funding" } });
     }
 
-    // The frontend must have also already submitted GenLayer's own
-    // `fund_escrow` (status-mirror only, no funds move on GenLayer) with the
-    // client's wallet — confirm that landed too before mirroring FUNDED.
+    // Only the verifier/owner key may attest funding on GenLayer. This write
+    // happens after the Base receipt has been checked against the complete
+    // client/provider/id/amount binding, so a direct client call cannot forge
+    // a FUNDED state.
+    if (!config.GENLAYER_OWNER_PRIVATE_KEY) {
+      return reply.code(503).send({ error: { code: "FUNDING_VERIFIER_NOT_CONFIGURED", message: "GenLayer funding verifier is not configured" } });
+    }
+    const fundingState = await readContract("get_contract", [contract.chainContractId!]) as ChainContract;
+    if (fundingState.status === "DRAFT") {
+      await writeContract(config.GENLAYER_OWNER_PRIVATE_KEY, "fund_escrow", [
+        contract.chainContractId!, fundTxHash, config.DELIVERA_ESCROW_ADDRESS, contract.chainContractId!,
+      ], { waitFor: "FINALIZED" });
+    } else if (fundingState.status !== "FUNDED") {
+      return reply.code(409).send({ error: { code: "BAD_CHAIN_STATUS", message: `Cannot confirm funding from ${fundingState.status}` } });
+    }
     return confirmAction<ChainContract>(req, reply, id, {
       allow: "client", method: "get_contract", kind: "fund_escrow",
       args: (cid) => [cid],
       predicate: (c) => c.status === "FUNDED",
+      requireFinalized: false,
       after: async () => {
         const c = await prisma.contract.update({
           where: { id },
@@ -602,7 +664,14 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
             resolvedAt: new Date(),
           },
         });
-        await prisma.contract.update({ where: { id }, data: { status: "ACTIVE" } });
+        const milestone = c.milestones?.[chainDispute.milestone_index];
+        if (milestone) {
+          await prisma.milestone.update({
+            where: { contractId_index: { contractId: id, index: chainDispute.milestone_index } },
+            data: { status: milestone.status as never },
+          });
+        }
+        await prisma.contract.update({ where: { id }, data: { status: c.status as never } });
       },
     });
   });

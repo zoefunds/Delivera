@@ -22,12 +22,16 @@ async function main() {
   const usdcAddress =
     process.env.BASE_SEPOLIA_USDC_ADDRESS || "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
   const relayerAddress = requireEnv("BASE_SEPOLIA_RELAYER_ADDRESS");
+  const authorityAddress = requireEnv("BASE_SEPOLIA_DECISION_AUTHORITY_ADDRESS");
+  if (relayerAddress.toLowerCase() === authorityAddress.toLowerCase()) {
+    throw new Error("Relayer and decision authority must be distinct addresses");
+  }
 
   const [deployer] = await hre.ethers.getSigners();
   console.log(`Deploying from ${deployer.address} to ${hre.network.name} ...`);
 
   const DeliveraEscrow = await hre.ethers.getContractFactory("DeliveraEscrow");
-  const escrow = await DeliveraEscrow.deploy(usdcAddress, relayerAddress);
+  const escrow = await DeliveraEscrow.deploy(usdcAddress, relayerAddress, authorityAddress);
   await escrow.waitForDeployment();
 
   const address = await escrow.getAddress();

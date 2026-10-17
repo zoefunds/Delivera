@@ -102,6 +102,7 @@ MAX_EVIDENCE_URLS = 5              # per submission
 MAX_TEXT_LEN = 8000                # cap for stored free text
 MAX_PAGE_CHARS = 6000              # evidence excerpt fed to the LLM per URL
 BPS_DENOMINATOR = 10000            # dispute splits are in basis points
+DISPUTE_BPS_STEP = 500             # deterministic 5% arbitration buckets
 
 
 # ---------------------------------------------------------------------------
@@ -368,9 +369,8 @@ class DeliveraEscrow(gl.Contract):
           1. Evidence reachability counts must match exactly (deterministic
              enough over a short window; a leader claiming a dead site is live
              gets caught here).
-          2. The approve gate (approved vs not) must match — UNLESS both
-             scores sit inside the borderline band around the threshold, in
-             which case the disagreement is honest subjectivity and we accept.
+          2. The payable decision (approved vs not) must match exactly. A
+             score tolerance can never bridge opposite financial outcomes.
           3. Scores must sit within SCORE_TOLERANCE of each other.
         Reasoning text and per-criterion phrasing are allowed to differ.
         """
@@ -387,28 +387,20 @@ class DeliveraEscrow(gl.Contract):
         l_approved = leader.get("verdict") == V_APPROVED
         v_approved = validator.get("verdict") == V_APPROVED
         if l_approved != v_approved:
-            borderline = (
-                abs(l_score - threshold) <= BORDERLINE_BAND
-                and abs(v_score - threshold) <= BORDERLINE_BAND
-            )
-            if not borderline:
-                return False
+            return False
 
         return abs(l_score - v_score) <= SCORE_TOLERANCE
 
     def _splits_agree(self, leader: dict, validator: dict) -> bool:
-        """Dispute splits agree when within 15% of the pot of each other and on
-        the same side of 50/50 (or both near the midline)."""
+        """Require the identical payable split. leader_fn quantizes all model
+        output to deterministic 500-bps buckets before comparison, so honest
+        nearby estimates may converge without treating different payments as
+        equivalent."""
         l_bps = int(leader.get("provider_bps", -1))
         v_bps = int(validator.get("provider_bps", -1))
         if not (0 <= l_bps <= BPS_DENOMINATOR and 0 <= v_bps <= BPS_DENOMINATOR):
             return False
-        if abs(l_bps - v_bps) > 1500:
-            return False
-        mid = BPS_DENOMINATOR // 2
-        same_side = (l_bps >= mid) == (v_bps >= mid)
-        both_near_mid = abs(l_bps - mid) <= 1000 and abs(v_bps - mid) <= 1000
-        return same_side or both_near_mid
+        return l_bps == v_bps
 
     def _handle_leader_error(self, leaders_res, leader_fn) -> bool:
         """Canonical classified-error comparison for validator functions."""
@@ -664,7 +656,8 @@ Return ONLY a JSON object:
         return Address(addr).as_hex
 
     @gl.public.write
-    def fund_escrow(self, contract_id: str) -> None:
+    def fund_escrow(self, contract_id: str, base_tx_hash: str,
+                    base_escrow_address: str, base_escrow_id: str) -> None:
         """Mark a contract funded once the backend relay has confirmed the
         client actually deposited the full amount in USDC into
         `DeliveraEscrow.sol` on Base Sepolia.
@@ -675,12 +668,26 @@ Return ONLY a JSON object:
         milestone/dispute logic already depends on.
         """
         wc = self._get_contract(contract_id)
-        sender = self._sender()
-        self._require(sender == wc.client, "Only the client can fund escrow")
+        self._require(gl.message.sender_address == self.owner,
+                      "Only the funding verifier can confirm Base escrow")
         self._require(wc.status == C_DRAFT, f"Cannot fund a {wc.status} contract")
+        self._require(bool(str(base_tx_hash).strip()), "Base funding tx hash required")
+        escrow_address = self._normalize_address(base_escrow_address)
+        self._require(str(base_escrow_id).strip() == contract_id,
+                      "Base escrow id does not match agreement")
         amount = int(wc.total_atto)
         wc.funded_atto = u256(amount)
         self.escrow_locked_total = u256(int(self.escrow_locked_total) + amount)
+        wc.evaluations_json.append(json.dumps({
+            "kind": "base_funding_confirmation",
+            "base_tx_hash": self._clip(base_tx_hash, 100),
+            "base_escrow_address": escrow_address,
+            "base_escrow_id": contract_id,
+            "client": wc.client,
+            "provider": wc.provider,
+            "amount_atto": str(amount),
+            "seq": int(self._next_seq()),
+        }, sort_keys=True))
         self._set_status(wc, C_FUNDED)
 
     @gl.public.write
@@ -955,9 +962,10 @@ Return ONLY a JSON object:
     ) -> int:
         """Open a dispute over a milestone. Freezes the contract until resolved.
 
-        Disputable: a milestone the AI rejected/exhausted (provider disputes),
-        or one that was approved/submitted (client disputes the outcome or the
-        work). Returns the dispute index.
+        Disputable: a submitted or rejected/exhausted unpaid milestone.
+        Post-payment disputes are intentionally unsupported: an approved
+        milestone's allocation has already left escrow and no unrelated
+        milestone may finance a reversal. Returns the dispute index.
         """
         wc = self._get_contract(contract_id)
         sender = self._sender()
@@ -967,8 +975,8 @@ Return ONLY a JSON object:
         self._require(0 <= milestone_index < len(milestones), "Bad milestone index")
         m = milestones[milestone_index]
         self._require(m["status"] != M_PENDING, "Nothing submitted to dispute")
-        self._require(m["status"] != M_APPROVED or sender == wc.client,
-                      "Approved milestones can only be disputed by the client")
+        self._require(m["status"] != M_APPROVED,
+                      "Post-payment disputes are not supported")
         for d in (json.loads(x) for x in wc.disputes_json):
             self._require(not (d["milestone_index"] == milestone_index and d["status"] == D_OPEN),
                           "An open dispute already exists for this milestone")
@@ -1009,8 +1017,8 @@ Return ONLY a JSON object:
 
         Every validator independently re-fetches the milestone's submitted
         evidence and adjudicates a provider/client split in basis points.
-        Agreement rule: splits within 1500 bps and on the same side of 50/50
-        (see _splits_agree). Settlement pays the split immediately.
+        Model outputs are rounded to 500-bps buckets and validators must agree
+        on the exact bucket (see _splits_agree).
         Returns a JSON summary string.
         """
         wc = self._get_contract(contract_id)
@@ -1027,10 +1035,8 @@ Return ONLY a JSON object:
         submission = m.get("submission") or {}
         urls = submission.get("evidence_urls", [])
         already_settled = int(m.get("settled_atto", "0"))
-        disputed_amount = int(m["amount_atto"]) - already_settled
-        # An approved-then-disputed milestone has already paid out; the
-        # disputed pot is whatever escrow remains attributable to it.
-        self._require(disputed_amount >= 0, "Nothing left to dispute")
+        self._require(already_settled == 0, "Milestone allocation already settled")
+        disputed_amount = int(m["amount_atto"])
 
         wc_title = wc.title
         m_title = m["title"]
@@ -1052,6 +1058,8 @@ Return ONLY a JSON object:
             except (ValueError, TypeError):
                 raise gl.vm.UserError(f"{ERROR_LLM} Non-numeric provider_bps")
             bps = max(0, min(BPS_DENOMINATOR, bps))
+            bps = ((bps + DISPUTE_BPS_STEP // 2) // DISPUTE_BPS_STEP) * DISPUTE_BPS_STEP
+            bps = min(BPS_DENOMINATOR, bps)
             if not urls:
                 # No evidence was ever submitted: hard-cap the provider share.
                 bps = min(bps, 1000)

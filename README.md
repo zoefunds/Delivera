@@ -8,9 +8,10 @@ wallet. Providers submit URL-addressable evidence (live sites, GitHub repos, API
 consensus, **every validator independently fetches the evidence with contract-side web access and runs
 its own AI evaluation**; a decision moves only when they agree. Disagreements go to AI arbitration with
 basis-point split settlement. GenLayer decides every outcome — approve, reject, split — but never
-custodies a dollar of it: a backend relay mirrors each decision onto a Solidity escrow contract on Base
-Sepolia, which is what actually holds and moves the USDC. No party — including the platform — can
-decide payouts alone.
+custodies a dollar of it: a backend authority attests finalized decisions and a separate relayer
+submits them to the Solidity escrow on Base Sepolia. The escrow verifies the signature, exact
+milestone allocation, and unique settlement id. This is a platform-operated testnet bridge with
+explicit trust assumptions, not a trustless cross-chain proof.
 
 ## Table of contents
 
@@ -56,8 +57,8 @@ moves it, driven by a backend relay that mirrors each GenLayer decision one-for-
 - **Provider** (freelancer/agency) — connects a wallet to sign in (or is invited by wallet address or
   email), accepts the contract, submits deliverables as evidence URLs, can resubmit after a rejection
   (bounded retries), receives real USDC the moment a milestone settles.
-- **Platform** — never custodies funds directly. It runs the GenLayer adjudication (via a per-user
-  custodial signing wallet, see [Wallets](#wallets-two-separate-ones)) and a relay that mirrors GenLayer's
+- **Platform** — never custodies funds directly. Users sign ordinary GenLayer actions with their own
+  wallets; a distinct owner/verifier key records verified Base funding, and a relay mirrors GenLayer's
   decisions onto the real USDC escrow, plus auth, UX, indexing/caching of chain state, notifications,
   and file attachments. Every fund-moving *decision* happens on the intelligent contract; every
   fund-moving *transfer* happens on `DeliveraEscrow.sol`, driven only by that decision.
@@ -73,7 +74,7 @@ caller is the client or the provider, and the detail endpoint returns `403 Forbi
 | Frontend | https://delivera-frontend.vercel.app |
 | Backend API | Fly.io app `delivera-api-v2` (`/health` for status) — the original `delivera-api` name is stuck on an inaccessible account, so this is the real one despite the mismatched app name in older links |
 | Intelligent contract (adjudication only) | `0x0Cf76bb4202FAe133Fa17F6512c03Eba76f9E7Fe` on GenLayer StudioNet |
-| Escrow contract (holds real value) | `DeliveraEscrow.sol` at `0x604919F0AB7d0DEdc74102d36C83bB5078714383` on Base Sepolia |
+| Escrow contract (holds real value) | `DeliveraEscrow.sol` v2; fresh Base Sepolia deployment required (v1 retired) |
 | USDC (Base Sepolia) | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
 
 Historically, before the payment layer moved to Base Sepolia, the GenLayer contract itself moved real
@@ -110,9 +111,8 @@ that history). GenLayer no longer moves any value at all — `_send_gen` is now 
                                  │  ├─ Tigris S3       │
                                  │  └─ Brevo (email)   │
                                  └───┬─────────────┬──┘
-                    genlayer-js, signed with        │ ethers v6, signed with
-                    the user's custodial             │ a dedicated relayer key
-                    GenLayer wallet                   │ (relay.ts, every 30s)
+                    user-signed GenLayer txs         │ signed authority decision
+                    finalized before mirror          │ + separate transport relay
                                  ▼                    ▼
               ┌─────────────────────────┐   ┌──────────────────────────┐
               │  DeliveraEscrow (GL)     │   │  DeliveraEscrow.sol       │
@@ -120,7 +120,7 @@ that history). GenLayer no longer moves any value at all — `_send_gen` is now 
               │  milestone state machine │──▶│  holds real USDC          │
               │  AI verification (web    │mirror│ release/refund/         │
               │  fetch) · validator       │decision│ resolveDispute       │
-              │  consensus · disputes     │   │  (relayer-only)          │
+              │  consensus · disputes     │   │  (signature + relayer)   │
               └─────────────────────────┘   └──────────────────────────┘
 ```
 
@@ -164,8 +164,8 @@ pinned GenVM runner hash so its schema never silently drifts.
 - **Verification** — `submit_deliverable` (evidence URLs + notes only, never free-form claims),
   `verify_deliverable`: leader and every validator independently `gl.nondet.web.get`/`web.render` the
   evidence and score it against the criteria with `gl.nondet.exec_prompt`. A custom validator function
-  compares the **approve/not-approve gate**, a **score tolerance band (±20)**, a **borderline band
-  (±12 around the 70-point threshold)**, and **evidence reachability**, so honest disagreement in
+  requires the exact same **approve/not-approve gate**, a **score tolerance band (±20)**,
+  and **evidence reachability**, so honest disagreement in
   wording still converges to one verdict — this is what keeps runs off `UNDETERMINED` without ever
   trusting the leader's output unchecked.
 - **Disputes** — `raise_dispute`, `add_dispute_statement`, `resolve_dispute`: another
@@ -185,12 +185,12 @@ Lint: `genvm-lint check contracts/delivera.py` → passes.
 1. Client calls `create_contract` — milestones, atto-scale amounts, acceptance criteria, evidence
    type — creating the on-chain record on GenLayer (mirrored in Postgres for fast listing).
 2. Client funds escrow themselves, on-chain, in USDC: their connected wallet calls `approve` then
-   `fundEscrow(contractId, freelancer, amount)` directly on `DeliveraEscrow.sol` on Base Sepolia (see
+   obtains an authenticated agreement binding, then calls
+   `fundEscrow(contractId, freelancer, allocations, deadline, signature)` on Base Sepolia (see
    `frontend/src/lib/escrow.ts`'s `fundEscrowOnChain`). The frontend then calls
    `POST /api/v1/contracts/:id/fund` with the resulting tx hash; the backend verifies a matching
-   `EscrowFunded` event on-chain (contract id, freelancer address, amount) before mirroring the
-   contract as `FUNDED` in Postgres and calling `fund_escrow` on the GenLayer contract to flip its own
-   state — a client can't fake this by just hitting the endpoint.
+   `EscrowFunded` event on-chain (contract id, client, freelancer, exact amount) before the owner/
+   verifier records the receipt through `fund_escrow` on GenLayer and mirrors `FUNDED` in Postgres.
 3. Provider `accept_contract` → contract goes `ACTIVE`.
 4. Provider `submit_deliverable`: one or more evidence URLs + notes, per milestone.
 5. Either party (or the platform, on their behalf) triggers `verify_deliverable` on GenLayer.
@@ -229,22 +229,22 @@ Lint: `genvm-lint check contracts/delivera.py` → passes.
 - This is why the contract almost never lands on `UNDETERMINED`: strict byte-for-byte agreement on an
   LLM's free-text output is nearly impossible across independent validator runs, so the comparison
   is deliberately narrowed to the decision-relevant fields with sane tolerance bands.
-- Dispute resolution (`resolve_dispute`) follows the same pattern for a provider/client basis-point
-  split, agreeing when splits land within 1500 bps of each other on the same side of 50/50.
+- Dispute resolution quantizes model outputs to 500-bps buckets and requires validators to agree on
+  the exact payable bucket.
 
 ## Payments: Base Sepolia USDC escrow + relay
 
 The payment layer lives entirely off GenLayer now, on Base Sepolia, in real USDC.
 
 - **`DeliveraEscrow.sol`** (`contracts/base/contracts/DeliveraEscrow.sol`), deployed at
-  `0x604919F0AB7d0DEdc74102d36C83bB5078714383`, holds the USDC (`0x036CbD53842c5426634e7929541eC2318f3dCF7e`
-  on Base Sepolia) for every contract. Its functions:
-  - `fundEscrow(contractId, freelancer, amount)` — called **directly by the client's own wallet** from
+  **v2 must be freshly deployed; the old v1 address is incompatible**, holds the USDC
+  (`0x036CbD53842c5426634e7929541eC2318f3dCF7e` on Base Sepolia). Its functions:
+  - `fundEscrow(contractId, freelancer, allocations, deadline, signature)` — called **directly by the client's own wallet** from
     the frontend (an ERC20 `approve` followed by this call — see `fundEscrowOnChain` in
     `frontend/src/lib/escrow.ts`), not by the backend.
-  - `releaseMilestone(contractId, amount)`, `refund(contractId, reason)`, and
-    `resolveDispute(contractId, disputedAmount, providerBps)` — all three are relayer-only (gated to a
-    backend-controlled key) and exist only to mirror a decision GenLayer already made.
+  - release/refund/dispute calls include a deterministic settlement id, exact milestone index and
+    amount, expiry, and decision-authority signature. The relayer cannot alter these fields, and
+    on-chain allocation/replay mappings reject duplicate or cross-milestone spending.
   - The `bytes32 contractId` used everywhere is `ethers.id(chainContractId)` — the same hash computed
     identically in `backend/src/services/baseSepolia.ts` and `frontend/src/lib/escrow.ts`, so the two
     sides always agree on which escrow a call refers to.
@@ -252,9 +252,12 @@ The payment layer lives entirely off GenLayer now, on Base Sepolia, in real USDC
   not yet relayed — `APPROVED` milestones, `CANCELLED`/completed-contract refunds, `RESOLVED`
   disputes — and calls the matching `DeliveraEscrow.sol` function via
   `backend/src/services/baseSepolia.ts` (ethers v6), signed by a dedicated relayer private key that is
-  **not** the same key as any user's GenLayer custodial wallet. Idempotency is just a stored
-  `relayTxHash` / `refundRelayTxHash` column per row — once set, that decision is never relayed again,
-  so the poll can safely re-scan "not yet relayed" rows on every tick with no separate locking.
+  **not** the decision-authority key. Database hashes are a mirror only: deterministic settlement ids
+  and `processedSettlements` enforce replay protection on-chain. On restart, the relay checks that
+  registry before sending and reconciles an already-executed settlement into Postgres.
+- **Finality gate:** wallet-submitted GenLayer writes are not mirrored into payout-eligible Postgres
+  state until the supplied transaction hash reaches `FINALIZED`. Merely `ACCEPTED` state cannot be
+  signed into a Base settlement.
 - **Unit convention (read this before touching amounts):** every ledger amount (`totalAtto`,
   `amountAtto`, etc.) is stored as an 18-decimal, dollar-equivalent value — a `$100` milestone is
   `100 * 10^18`, using the same naming/scale GenLayer's native-GEN accounting used, even though no GEN
@@ -266,41 +269,22 @@ The payment layer lives entirely off GenLayer now, on Base Sepolia, in real USDC
   roughly `10^12`× too large or too small.
 - **Funding is verified, not trusted.** `POST /api/v1/contracts/:id/fund` requires the tx hash from
   the client's own `fundEscrow` call and independently checks a matching `EscrowFunded` event
-  (contract id, freelancer address, amount) via `verifyEscrowFunded` before marking the contract
-  `FUNDED` — hitting the endpoint without a real on-chain deposit does nothing.
+  (contract id, client, freelancer, exact amount) via `verifyEscrowFunded`. Funding requires a
+  short-lived signature binding those parties and every milestone allocation. Only the GenLayer
+  owner/verifier may record the verified Base receipt as `FUNDED`; clients cannot call it directly.
 - **Network switching:** before any on-chain escrow write, `ensureBaseSepolia()`
   (`frontend/src/lib/escrow.ts`) forces the connected wallet onto Base Sepolia (chain id `84532`),
   since a wallet the user has manually pointed elsewhere will otherwise still try to sign there.
 
-## Wallets (two separate ones)
+## Wallet and signing boundaries
 
-This is the single most important thing to get right about the current architecture: **the wallet a
-user logs in with and the wallet GenLayer signs with are two different wallets, for two different
-purposes.**
-
-- **Login / funding wallet — the user's own.** The user connects an external wallet (MetaMask, etc.)
-  via Reown AppKit (`frontend/src/lib/appkit.ts`). This wallet signs the SIWE-style login message (see
-  [REST API surface](#rest-api-surface)) *and* is the wallet that sends the real Base Sepolia USDC
-  transactions — funding escrow, receiving a milestone payout, receiving a refund. Delivera never
-  holds this wallet's key.
-- **GenLayer signing wallet — custodial, backend-held, never touches real money.** On a user's first
-  sign-in the backend still auto-generates a secp256k1 keypair (ethers.js) purely so it can sign
-  GenLayer intelligent-contract calls (`create_contract`, `submit_deliverable`, `approve_milestone`,
-  etc.) on that user's behalf — GenLayer transactions need a signer, and requiring every user to sign
-  every GenLayer call manually would be a terrible UX for a chain that only ever produces a decision,
-  not a payment. This wallet:
-  - has its private key encrypted at rest with AES-256-GCM, the data key derived per-user via scrypt
-    from `WALLET_MASTER_KEY` plus a random per-user salt (ciphertext, salt, and IV all in Postgres);
-  - is exportable, but only after the user re-authenticates by signing a fresh one-time message with
-    their *login* wallet (there's no password to re-check anymore — see
-    `GET/POST /api/v1/wallet/export{/nonce,}` in `backend/src/routes/wallet.ts`), and the export is
-    audit-logged;
-  - now that escrow lives in USDC on Base Sepolia, never holds or moves anything of real value — its
-    on-chain GenLayer "balance" is vestigial bookkeeping, not spendable funds.
-- Every GenLayer contract write is signed server-side with the calling user's custodial wallet via
-  `genlayer-js`; every Base Sepolia escrow write that a user initiates (funding) is signed client-side
-  by their own connected wallet; every Base Sepolia escrow write the relay initiates (release/refund/
-  dispute payout) is signed by a third, separate relayer key that belongs to neither wallet above.
+- The user's connected wallet signs login, normal GenLayer lifecycle actions, and the Base Sepolia
+  USDC funding transaction. Delivera does not hold the user's private key.
+- A GenLayer owner/verifier key is used only after a Base funding receipt is independently verified;
+  clients cannot directly mark an agreement funded.
+- A Base decision-authority key signs exact, expiring settlement instructions derived from finalized
+  GenLayer state. A separate relayer key transports them. Neither key is a user wallet, and the
+  relayer alone cannot move funds.
 
 ## Frontend
 
@@ -313,8 +297,8 @@ USDC calls (network switching, `approve` + `fundEscrow`). Pages: landing, auth (
 login page — no register/forgot-password/reset-password/verify-email pages anymore, since there's
 nothing to register with besides a wallet), dashboard (contracts list with live escrow/active/completed
 stats), the milestone-builder contract wizard, the contract detail page (lifecycle actions, full
-submission history, AI verdicts, disputes, on-chain funding), wallet (shows both the connected login
-wallet and the custodial GenLayer wallet), and notifications.
+submission history, AI verdicts, disputes, on-chain funding), wallet (connected address and live
+Base Sepolia USDC balance), and notifications.
 
 ## REST API surface
 
@@ -325,7 +309,7 @@ Errors are a uniform `{ "error": { "code", "message", "details?" } }` envelope. 
 | Area | Endpoints |
 |---|---|
 | Auth | `GET /auth/nonce?address=` (issues a nonce + SIWE message to sign), `POST /auth/verify` (`{address, signature}`, recovers the signer and issues the session), refresh, logout, me |
-| Wallet | view address + GenLayer balance, one-time custodial-key export (gated on signing a fresh message with the login wallet, not a password) |
+| Wallet | view the connected address and live Base Sepolia USDC balance |
 | Contracts | create (accepts `providerEmail` **or** `providerWalletAddress`), list, detail (chain state Redis-cached), fund (verifies an on-chain `EscrowFunded` event against a client-supplied tx hash), accept, cancel |
 | Milestones | submit deliverable, trigger AI verification, manual approve |
 | Disputes | raise, add statement, resolve |
@@ -346,8 +330,8 @@ consensus), so this rarely bites real usage.
 PostgreSQL via Prisma mirrors on-chain state for fast reads/search; GenLayer remains the source of
 truth for *decisions* (verification verdicts, dispute splits) and `DeliveraEscrow.sol` on Base Sepolia
 remains the source of truth for *funds*. Tables cover users (identified by wallet address, with email
-now optional), custodial GenLayer wallets, sessions, contracts/milestones/deliverables mirrors —
-including the `relayTxHash`/`refundRelayTxHash` columns the relay uses for idempotency — AI evaluation +
+now optional), sessions, contracts/milestones/deliverables mirrors — including the
+`relayTxHash`/`refundRelayTxHash` recovery markers (on-chain ids enforce idempotency) — AI evaluation +
 consensus records, on-chain transaction audit log, disputes, reviews, attachments, notifications, and a
 security audit log. The `EmailToken` model and its `TokenPurpose` enum have been removed entirely along
 with the email-verification/password-reset flows they backed. Full schema, constraints, and indexes:
@@ -359,7 +343,7 @@ with the email-verification/password-reset flows they backed. Full schema, const
 contracts/delivera.py         Intelligent contract (GenLayer StudioNet) — adjudication only, moves no value
 contracts/base/contracts/     DeliveraEscrow.sol — real USDC custody, Base Sepolia
 backend/                      Fastify API, Prisma schema + migrations, tests
-  src/lib/                    genlayer.ts (GenLayer chain client), crypto.ts (custodial wallet encryption),
+  src/lib/                    genlayer.ts (reads/finality/owner funding verification),
                               email.ts (Brevo, best-effort notify only), redis.ts, s3.ts, audit.ts
   src/services/baseSepolia.ts ethers v6 client for DeliveraEscrow.sol: releaseMilestone, refund,
                               resolveDispute, verifyEscrowFunded
@@ -371,7 +355,7 @@ frontend/                     Next.js 15 App Router + Tailwind
   src/lib/escrow.ts           Direct client-side calls to DeliveraEscrow.sol (fundEscrowOnChain, ensureBaseSepolia)
 docs/                         ARCHITECTURE.md, DATABASE.md, API.md, DEPLOYMENT.md
 MEMORY.md                     Project memory: stack decisions, GenLayer gotchas, deployment state
-.github/workflows/ci.yml      Backend typecheck+test, frontend build, contract lint
+.github/workflows/ci.yml      Backend typecheck, frontend build, Solidity tests, Python syntax
 ```
 
 ## Local development
@@ -408,7 +392,8 @@ Full guide in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Summary:
    stuck on an inaccessible account, so don't be confused if you see references to it) — with all
    secrets set, including `GENLAYER_CONTRACT_ADDRESS` (step 1), the Base Sepolia escrow address, RPC
    URL, and relayer private key (step 2), `DATABASE_URL` (Fly Postgres), `REDIS_URL` (Upstash),
-   `BREVO_API_KEY`, `WALLET_MASTER_KEY` (for the custodial GenLayer wallets), and Tigris S3 credentials.
+   `BREVO_API_KEY`, the GenLayer owner/verifier key, separate Base relayer and authority keys, and
+   Tigris S3 credentials.
 4. `vercel --prod` the frontend (Vercel project `delivera-frontend`) with `NEXT_PUBLIC_API_URL`
    pointing at the Fly backend and `NEXT_PUBLIC_REOWN_PROJECT_ID` set for wallet connect, then update
    `APP_URL`/`CORS_ORIGINS` on the backend once the final Vercel domain is known and redeploy.
@@ -423,10 +408,9 @@ requests. The relay job (`backend/src/jobs/relay.ts`) runs inside that same back
 ## Security highlights
 
 Wallet-signature (SIWE-style) login, no passwords to leak · JWT (15 min) + rotating httpOnly refresh
-tokens · per-user AES-256-GCM custodial-wallet encryption (scrypt-derived keys) for the GenLayer signing
-wallet · one-time, signature-gated, audited custodial-key export · on-chain `EscrowFunded` event
-verification before trusting any funding claim · a relayer key kept separate from every user's
-custodial wallet, so a compromised user wallet can never authorize a payout · Redis rate limiting · zod
+tokens · user-signed GenLayer lifecycle writes · finalized-transaction gating · exact on-chain
+`EscrowFunded` event and allocation verification · separate decision-authority and transport-relayer
+keys · Solidity allocation and replay enforcement · Redis rate limiting · zod
 validation on every route · uniform error envelope · audit log for auth/wallet/contract actions ·
 secrets only in Fly/Vercel, never committed.
 
@@ -489,8 +473,7 @@ it out:
   `DeliveraEscrow.sol` until the relay acts), but a crashed relay process would leave decisions
   un-relayed until it restarts and resumes the poll. There's no separate alerting yet if a row stays
   un-relayed for an unexpectedly long time.
-- **The relayer key is a single point of failure for payouts specifically** (not for adjudication,
-  which still requires GenLayer validator consensus): if it's compromised, an attacker could call
-  `releaseMilestone`/`refund`/`resolveDispute` for arbitrary amounts within a contract's funded
-  balance. It is deliberately kept separate from every user's custodial GenLayer wallet so that
-  compromising one user's account can't reach it.
+- **The decision authority is a testnet trust assumption.** A stolen relayer key alone cannot move
+  funds: it also needs a valid authority signature, and the contract enforces allocations and replay
+  ids. A compromised authority could still authorize false outcomes, especially if it colludes with
+  the relayer. Production should replace it with a threshold committee or verified GenLayer proof.

@@ -1,140 +1,125 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-describe("DeliveraEscrow", function () {
-  const CONTRACT_ID = ethers.encodeBytes32String("job-1");
-  const AMOUNT = 1_000_000n; // 1.00 mUSDC (6 decimals)
+describe("DeliveraEscrow v2", function () {
+  const ID = ethers.id("delivera-1");
+  const ALLOCATIONS = [400_000n, 350_000n, 250_000n];
 
-  async function deployFixture() {
-    const [owner, relayer, client, freelancer, stranger] = await ethers.getSigners();
-
-    const MockUSDC = await ethers.getContractFactory("MockUSDC");
-    const usdc = await MockUSDC.deploy();
-
-    const DeliveraEscrow = await ethers.getContractFactory("DeliveraEscrow");
-    const escrow = await DeliveraEscrow.deploy(await usdc.getAddress(), relayer.address);
-
+  async function fixture() {
+    const [owner, relayer, authority, client, provider, attacker] = await ethers.getSigners();
+    const usdc = await (await ethers.getContractFactory("MockUSDC")).deploy();
+    const escrow = await (await ethers.getContractFactory("DeliveraEscrow")).deploy(
+      await usdc.getAddress(), relayer.address, authority.address,
+    );
     await usdc.mint(client.address, 10_000_000n);
+    await usdc.mint(attacker.address, 10_000_000n);
     await usdc.connect(client).approve(await escrow.getAddress(), ethers.MaxUint256);
-
-    return { owner, relayer, client, freelancer, stranger, usdc, escrow };
+    await usdc.connect(attacker).approve(await escrow.getAddress(), ethers.MaxUint256);
+    const deadline = BigInt((await ethers.provider.getBlock("latest")).timestamp + 3600);
+    async function fundingSig(funder = client, freelancer = provider, allocations = ALLOCATIONS) {
+      const digest = await escrow.fundingDigest(ID, funder.address, freelancer.address, allocations, deadline);
+      return authority.signMessage(ethers.getBytes(digest));
+    }
+    async function settlementSig(sid, action, index, amount, bps) {
+      const digest = await escrow.settlementDigest(sid, ID, action, index, amount, bps, deadline);
+      return authority.signMessage(ethers.getBytes(digest));
+    }
+    async function fund() {
+      await escrow.connect(client).fundEscrow(ID, provider.address, ALLOCATIONS, deadline, await fundingSig());
+    }
+    return { owner, relayer, authority, client, provider, attacker, usdc, escrow, deadline, fundingSig, settlementSig, fund };
   }
 
-  it("funds an escrow and records balances", async function () {
-    const { client, freelancer, usdc, escrow } = await deployFixture();
-
-    await expect(escrow.connect(client).fundEscrow(CONTRACT_ID, freelancer.address, AMOUNT))
-      .to.emit(escrow, "EscrowFunded")
-      .withArgs(CONTRACT_ID, client.address, freelancer.address, AMOUNT);
-
-    expect(await usdc.balanceOf(await escrow.getAddress())).to.equal(AMOUNT);
-
-    const e = await escrow.getEscrow(CONTRACT_ID);
-    expect(e.client).to.equal(client.address);
-    expect(e.freelancer).to.equal(freelancer.address);
-    expect(e.funded).to.equal(AMOUNT);
-    expect(e.status).to.equal(1n); // FUNDED
+  it("binds the client, provider, total, and milestone allocations", async function () {
+    const { client, provider, usdc, escrow, deadline, fundingSig } = await fixture();
+    await expect(escrow.connect(client).fundEscrow(ID, provider.address, ALLOCATIONS, deadline, await fundingSig()))
+      .to.emit(escrow, "EscrowFunded");
+    expect(await escrow.milestoneAllocation(ID, 0)).to.equal(400_000n);
+    expect(await escrow.milestoneAllocation(ID, 2)).to.equal(250_000n);
+    expect(await escrow.remainingEscrow(ID)).to.equal(1_000_000n);
+    expect(await usdc.balanceOf(await escrow.getAddress())).to.equal(1_000_000n);
   });
 
-  it("lets the relayer release a milestone to the freelancer", async function () {
-    const { relayer, client, freelancer, usdc, escrow } = await deployFixture();
-    await escrow.connect(client).fundEscrow(CONTRACT_ID, freelancer.address, AMOUNT);
-
-    const releaseAmount = 400_000n;
-    await expect(escrow.connect(relayer).releaseMilestone(CONTRACT_ID, releaseAmount))
-      .to.emit(escrow, "MilestoneReleased")
-      .withArgs(CONTRACT_ID, freelancer.address, releaseAmount);
-
-    expect(await usdc.balanceOf(freelancer.address)).to.equal(releaseAmount);
-    expect(await escrow.remainingEscrow(CONTRACT_ID)).to.equal(AMOUNT - releaseAmount);
-  });
-
-  it("reverts releaseMilestone when called by a non-relayer", async function () {
-    const { client, freelancer, stranger, escrow } = await deployFixture();
-    await escrow.connect(client).fundEscrow(CONTRACT_ID, freelancer.address, AMOUNT);
-
+  it("rejects unauthorized pre-funding and altered funding claims", async function () {
+    const { client, provider, attacker, escrow, deadline, fundingSig } = await fixture();
+    const clientSignature = await fundingSig(client, provider, ALLOCATIONS);
     await expect(
-      escrow.connect(stranger).releaseMilestone(CONTRACT_ID, 100_000n)
-    ).to.be.revertedWith("DeliveraEscrow: not relayer");
-
+      escrow.connect(attacker).fundEscrow(ID, provider.address, ALLOCATIONS, deadline, clientSignature),
+    ).to.be.revertedWith("DeliveraEscrow: invalid authority signature");
     await expect(
-      escrow.connect(client).releaseMilestone(CONTRACT_ID, 100_000n)
-    ).to.be.revertedWith("DeliveraEscrow: not relayer");
+      escrow.connect(client).fundEscrow(ID, attacker.address, ALLOCATIONS, deadline, clientSignature),
+    ).to.be.revertedWith("DeliveraEscrow: invalid authority signature");
+    await expect(
+      escrow.connect(client).fundEscrow(ID, provider.address, [1_000_000n], deadline, clientSignature),
+    ).to.be.revertedWith("DeliveraEscrow: invalid authority signature");
   });
 
-  it("refunds remaining escrow to the client on cancellation", async function () {
-    const { relayer, client, freelancer, usdc, escrow } = await deployFixture();
-    await escrow.connect(client).fundEscrow(CONTRACT_ID, freelancer.address, AMOUNT);
-
-    const clientBalBefore = await usdc.balanceOf(client.address);
-
-    await expect(escrow.connect(relayer).refund(CONTRACT_ID, "client cancelled"))
-      .to.emit(escrow, "Refunded")
-      .withArgs(CONTRACT_ID, client.address, AMOUNT, "client cancelled");
-
-    expect(await usdc.balanceOf(client.address)).to.equal(clientBalBefore + AMOUNT);
-    expect(await escrow.remainingEscrow(CONTRACT_ID)).to.equal(0n);
-
-    const e = await escrow.getEscrow(CONTRACT_ID);
-    expect(e.status).to.equal(2n); // SETTLED
+  it("isolates a disputed milestone and leaves unrelated funds untouched", async function () {
+    const { relayer, client, provider, usdc, escrow, deadline, settlementSig, fund } = await fixture();
+    await fund();
+    const sid = ethers.id("delivera-1:dispute:1");
+    const sig = await settlementSig(sid, 2, 1, 350_000n, 6000n);
+    const clientBefore = await usdc.balanceOf(client.address);
+    await escrow.connect(relayer).resolveDispute(ID, sid, 1, 350_000n, 6000n, deadline, sig);
+    expect(await usdc.balanceOf(provider.address)).to.equal(210_000n);
+    expect(await usdc.balanceOf(client.address)).to.equal(clientBefore + 140_000n);
+    expect(await escrow.remainingEscrow(ID)).to.equal(650_000n);
+    expect(await escrow.milestoneSettled(ID, 0)).to.equal(0n);
+    expect(await escrow.milestoneSettled(ID, 1)).to.equal(350_000n);
+    expect(await escrow.milestoneSettled(ID, 2)).to.equal(0n);
   });
 
-  it("reverts refund by a non-relayer", async function () {
-    const { client, freelancer, stranger, escrow } = await deployFixture();
-    await escrow.connect(client).fundEscrow(CONTRACT_ID, freelancer.address, AMOUNT);
-
+  it("requires a genuine unaltered signed settlement, not just the relayer", async function () {
+    const { relayer, attacker, escrow, deadline, settlementSig, fund } = await fixture();
+    await fund();
+    const sid = ethers.id("delivera-1:release:0");
+    const sig = await settlementSig(sid, 1, 0, 400_000n, 10_000n);
     await expect(
-      escrow.connect(stranger).refund(CONTRACT_ID, "nope")
+      escrow.connect(relayer).releaseMilestone(ID, sid, 0, 350_000n, deadline, sig),
+    ).to.be.revertedWith("DeliveraEscrow: invalid authority signature");
+    await expect(
+      escrow.connect(attacker).releaseMilestone(ID, sid, 0, 400_000n, deadline, sig),
     ).to.be.revertedWith("DeliveraEscrow: not relayer");
   });
 
-  it("splits a disputed amount between freelancer and client per bps", async function () {
-    const { relayer, client, freelancer, usdc, escrow } = await deployFixture();
-    await escrow.connect(client).fundEscrow(CONTRACT_ID, freelancer.address, AMOUNT);
-
-    const disputedAmount = AMOUNT; // whole pot in dispute
-    const providerBps = 7000n; // 70% to freelancer, 30% back to client
-
+  it("blocks duplicate ids and duplicate milestone settlement on-chain", async function () {
+    const { relayer, escrow, deadline, settlementSig, fund } = await fixture();
+    await fund();
+    const sid = ethers.id("delivera-1:release:0");
+    const sig = await settlementSig(sid, 1, 0, 400_000n, 10_000n);
+    await escrow.connect(relayer).releaseMilestone(ID, sid, 0, 400_000n, deadline, sig);
     await expect(
-      escrow.connect(relayer).resolveDispute(CONTRACT_ID, disputedAmount, providerBps)
-    )
-      .to.emit(escrow, "DisputeResolved")
-      .withArgs(CONTRACT_ID, disputedAmount, 700_000n, 300_000n, providerBps);
-
-    expect(await usdc.balanceOf(freelancer.address)).to.equal(700_000n);
-    expect(await usdc.balanceOf(client.address)).to.equal(10_000_000n - AMOUNT + 300_000n);
-    expect(await escrow.remainingEscrow(CONTRACT_ID)).to.equal(0n);
+      escrow.connect(relayer).releaseMilestone(ID, sid, 0, 400_000n, deadline, sig),
+    ).to.be.revertedWith("DeliveraEscrow: settlement already processed");
+    const secondId = ethers.id("delivera-1:release:0:retry");
+    const secondSig = await settlementSig(secondId, 1, 0, 400_000n, 10_000n);
+    await expect(
+      escrow.connect(relayer).releaseMilestone(ID, secondId, 0, 400_000n, deadline, secondSig),
+    ).to.be.revertedWith("DeliveraEscrow: milestone already settled");
   });
 
-  it("blocks double-release: cannot release more than remains, and a settled escrow rejects further action", async function () {
-    const { relayer, client, freelancer, escrow } = await deployFixture();
-    await escrow.connect(client).fundEscrow(CONTRACT_ID, freelancer.address, AMOUNT);
-
-    // Release the full amount once.
-    await escrow.connect(relayer).releaseMilestone(CONTRACT_ID, AMOUNT);
-    expect(await escrow.remainingEscrow(CONTRACT_ID)).to.equal(0n);
-
-    // Escrow auto-settles once exhausted — any further release reverts.
-    await expect(
-      escrow.connect(relayer).releaseMilestone(CONTRACT_ID, 1n)
-    ).to.be.revertedWith("DeliveraEscrow: escrow not active");
-
-    // Refund and dispute resolution are likewise blocked once settled.
-    await expect(
-      escrow.connect(relayer).refund(CONTRACT_ID, "double spend attempt")
-    ).to.be.revertedWith("DeliveraEscrow: escrow not active");
-
-    await expect(
-      escrow.connect(relayer).resolveDispute(CONTRACT_ID, 1n, 5000n)
-    ).to.be.revertedWith("DeliveraEscrow: escrow not active");
-  });
-
-  it("reverts releaseMilestone for more than the remaining balance", async function () {
-    const { relayer, client, freelancer, escrow } = await deployFixture();
-    await escrow.connect(client).fundEscrow(CONTRACT_ID, freelancer.address, AMOUNT);
-
-    await expect(
-      escrow.connect(relayer).releaseMilestone(CONTRACT_ID, AMOUNT + 1n)
-    ).to.be.revertedWith("DeliveraEscrow: amount exceeds remaining escrow");
+  it("supports multi-milestone release, dispute split, and exact cancellation refund", async function () {
+    const { relayer, client, provider, usdc, escrow, deadline, settlementSig, fund } = await fixture();
+    await fund();
+    const releaseId = ethers.id("release-0");
+    await escrow.connect(relayer).releaseMilestone(
+      ID, releaseId, 0, 400_000n, deadline,
+      await settlementSig(releaseId, 1, 0, 400_000n, 10_000n),
+    );
+    const disputeId = ethers.id("dispute-1");
+    await escrow.connect(relayer).resolveDispute(
+      ID, disputeId, 1, 350_000n, 6000n, deadline,
+      await settlementSig(disputeId, 2, 1, 350_000n, 6000n),
+    );
+    const clientBefore = await usdc.balanceOf(client.address);
+    const refundId = ethers.id("cancel-rest");
+    await escrow.connect(relayer).refund(
+      ID, refundId, 250_000n, "cancelled", deadline,
+      await settlementSig(refundId, 3, ethers.MaxUint256, 250_000n, 0n),
+    );
+    expect(await usdc.balanceOf(provider.address)).to.equal(610_000n);
+    expect(await usdc.balanceOf(client.address)).to.equal(clientBefore + 250_000n);
+    expect(await escrow.remainingEscrow(ID)).to.equal(0n);
+    expect((await escrow.getEscrow(ID))[6]).to.equal(2n);
   });
 });
