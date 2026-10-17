@@ -44,6 +44,17 @@ Observed results:
   the linter's pinned SDK archive was unavailable (`filename ...tar not found`).
 - Patch whitespace validation: passed.
 
+### Hosted CI status
+
+GitHub Actions run
+[`39080795549`](https://github.com/zoefunds/Delivera/actions/runs/39080795549)
+was triggered for commit `42f590a8cfa3467513310bd00ba38e07fc208c42`,
+but GitHub did not start the job: `The job was not started because your
+account is locked due to a billing issue.` This is an account-level runner
+block, not a test failure; GitHub produced no job log. The commands and
+observed local results above are the current reproducible evidence until the
+repository owner's Actions billing lock is cleared and the workflow is rerun.
+
 ## Funded StudioNet to Base Sepolia demonstration
 
 The completed agreement was `delivera-2`, with Base allocations of 500,000,
