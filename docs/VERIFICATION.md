@@ -2,20 +2,21 @@
 
 Date: 2026-10-18 (Africa/Lagos)
 
-## Source state
+## Deployed source and addresses
 
-- Baseline reviewed: `bcc7411`
-- Remediation source: working tree based on `bcc7411` (record the final commit
-  here before deployment)
-- Base escrow v2 live address: **not deployed yet**
-- GenLayer remediation live address: **not deployed yet**
+- Source commit: `d9d94c0b5b16edcc4982875f89dd53542b658e92`
+- GenLayer StudioNet contract: `0xB19331f411618Abb253a01Fa5b457D910c92D8F6`
+- GenLayer deployment transaction: `0x79b954dd00da88b3f42028ed23e5f96bdf58d1c6ffeeb188a46df411f054dfc7`
+- Base Sepolia escrow v2: `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`
+- Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+- Client and decision authority: `0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb`
+- Configured relayer (restored after the run): `0xd07E3D1bAF59F1c09e2F8842786D89B716915f3E`
 
-The prior Base escrow address belongs to v1 and must not be represented as the
-remediated deployment. A deployment attempt from this workspace was blocked by
-the execution approval boundary because creating a live fund-moving contract
-requires explicit user authorization.
+The GenLayer deployment receipt reached `FINALIZED` (`status: 7`) with
+`MAJORITY_AGREE` and unanimous revealed votes. The Base deployment was compiled
+from the source commit above.
 
-## Reproducible local checks
+## Reproducible checks
 
 ```bash
 cd contracts/base && npm test
@@ -36,49 +37,74 @@ Observed results:
   the linter's pinned SDK archive was unavailable (`filename ...tar not found`).
 - Patch whitespace validation: passed.
 
-## Scenarios covered by the Solidity suite
+## Funded StudioNet to Base Sepolia demonstration
 
-The v2 suite uses a three-milestone escrow with allocations 400,000, 350,000,
-and 250,000 USDC base units and asserts actual token balances and authoritative
-escrow readbacks.
+The completed agreement was `delivera-2`, with Base allocations of 500,000,
+600,000, and 700,000 USDC base units (0.5, 0.6, and 0.7 USDC). Its provider was
+`0xCB6000A59ea2653CaCc2eC5c62f9ac9a341222fb`.
 
-1. Funding binds contract id, client, provider, total, and the ordered allocation array.
-2. A different wallet cannot pre-fund/reserve the public id with the client's authorization.
-3. Altering the provider or allocation array invalidates the funding signature.
-4. Resolving milestone 1 at 60/40 distributes only 350,000 and leaves 650,000 untouched.
-5. A relayer cannot alter a signed amount, and a non-relayer cannot submit the instruction.
-6. Reusing the same settlement id is rejected on-chain.
-7. Re-signing a second id for an already settled milestone is also rejected by allocation state.
-8. A release, partial dispute split, and cancellation refund across three milestones finish with
-   exact provider/client token changes and zero remaining escrow.
+### Funding and authenticated binding
 
-## Interrupted relay recovery
+- StudioNet creation: `0x67de1f9413fbe02172d891a58b47dfece3a2bd27cc4d3754158bc3cd2918054d`, finalized with majority agreement.
+- Base funding: `0x54692058973271c5ecf578bf31184b1f1814cf0cfca32a08bd4111424c4919cd`, block 48,255,609.
+- Base `EscrowFunded` bound `delivera-2`, the registered client, provider, ordered allocation hash, and exactly 1,800,000 units.
+- The owner-only StudioNet funding confirmation recorded the exact Base transaction hash, escrow address, and matching id; its authoritative readback showed `FUNDED` with `funded_atto = 1800000000000000000`.
+- Provider acceptance: `0x9a0f8b9d82bf964f882a7b6250a9db00c4b41eb2ba5037232cb936cc4dbd1232`.
 
-Settlement ids are deterministic (`chainContractId:kind:index`) and consumed
-by `processedSettlements` in Solidity. Before submitting a database row whose
-tx hash is null, the relay checks that mapping. If Base already executed the
-instruction, the relay records a recovered marker and applies the accounting
-delta without sending a second transaction. Row claiming and accounting occur
-in one database transaction. Duplicate settlement attempts remain impossible
-even if PostgreSQL is unavailable immediately after a successful Base receipt.
+### Milestone 0: manual approval and payment
 
-Wallet-signed GenLayer writes carry their transaction hash into the confirmation
-endpoint. The backend waits for `FINALIZED` before mirroring payout-eligible
-state; an `ACCEPTED` but appealable result cannot authorize Base movement.
+- Provider submitted `https://example.com/`; the client manually approved it in StudioNet transaction `0x4b0646cae67d0b566e683c22403ebf16a256dc96383d9307bfe20d0f210c59bb`, which reached `FINALIZED`.
+- Base release: `0x0fb001c48852896c3673dbccb1a5779ffafad779f6d5102d076bd906c31834e8`, block 48,255,711.
+- Exactly 500,000 units moved to the provider; Base remaining escrow became 1,300,000.
 
-## Live end-to-end checklist (required before acceptance)
+### Milestone 1: rejection, arbitration, and isolation
 
-After explicit deployment authorization and funded test wallets are available:
+- Validators independently attempted to retrieve `https://delivera-evidence.invalid/missing-artifact`.
+- Verification transaction `0xb69a77e52abc8fd70c1a33ffadb253ef5757708ad3a0b4bfeb0c84d70882b38b` reached majority agreement on `rejected`, score 0, and `reachable_count = 0`.
+- The finalized arbitration used the exact 500-bps bucket rule and resolved at provider 0 / client 10,000 bps. The agreement recorded provider 0 and client 600,000,000,000,000,000 atto units for milestone 1.
+- Base dispute settlement: `0xdcec01a034b971b37ccdf3ae1b51a99b4254cd2a801cce8a838e6808c6f1f793`, block 48,255,813.
+- The authoritative Base readback immediately afterward was: funded 1,800,000; released 500,000; refunded 600,000; milestone settlements `[500000, 600000, 0]`; remaining 700,000. This proves milestone 2's allocation was untouched.
 
-1. Commit the source and record its SHA.
-2. Deploy the new GenLayer contract; record its address and finalized receipt.
-3. Deploy Base escrow v2 with distinct relayer and authority addresses; verify source and record address.
-4. Create a three-milestone agreement and capture the GenLayer creation result.
-5. Fund exact allocations from the registered client; capture `EscrowFunded`, USDC balances, and `getEscrow`.
-6. Approve one milestone, reject/resubmit another, and resolve a third by partial split.
-7. Stop the relay after one Base receipt but before its DB write, restart it, and capture recovery without a second transfer.
-8. Submit duplicate-id and second-id/same-milestone attempts and capture both reverts.
-9. Exercise cancellation/completion refund for remaining allocations.
-10. Attach GenVM finalized results, Base receipts, authoritative readbacks, before/after client/provider balances, addresses, and source SHA to this file.
+### Milestone 2 and completion
 
-Local simulation is evidence for correctness, but it is not mislabeled here as a funded StudioNet-to-Base Sepolia demonstration.
+- The provider submitted the final milestone only after the isolation readback; the client manually approved it.
+- The finalized StudioNet agreement readback was `COMPLETED`, released 1.2 ledger units and refunded 0.6, with milestones 0 and 2 approved and milestone 1 exhausted/resolved.
+- Base release: `0x635419ae5f4b13fe3edaf9d607445c36c3a9d86ea920ec2835da2b620348acbb`, block 48,255,881.
+- Final Base state: funded 1,800,000; released 1,200,000; refunded 600,000; milestone settlements `[500000, 600000, 700000]`; remaining 0; status `SETTLED`.
+- USDC balances for this agreement changed from client 124,440,000 / provider 0 / escrow 0 to client 123,240,000 / provider 1,200,000 / escrow 0. Thus the provider actually received 1.2 USDC and the client actually recovered 0.6 USDC from the disputed allocation.
+
+## Cancellation and refund evidence
+
+`delivera-1` was funded and then cancelled before provider acceptance, exercising
+the safe cancellation path:
+
+- Base funding: `0x70f89206813658d63d898e3a3c48ee74dd15143e41ec34afdaf027ea147f29e9`.
+- Finalized StudioNet cancellation: `0xbbdb0dba94bdf10113e5896247d060e10084d76d4fbd341676cbf848708b0ac2`.
+- Base refund and settlement: `0x65ca3b8bcaa887802694a7110cde4604e5b730d8568ee40625a3a96c080c9e3a`, block 48,255,580.
+- All three unsettled allocations were marked settled, the entire 1.8 USDC returned to the client, and remaining escrow became zero.
+
+## Replay and interrupted-relay recovery
+
+The live Base readback returned `processedSettlements = true` for milestone 0
+release, milestone 1 dispute, and milestone 2 release. This is the recovery
+signal used when a Base receipt succeeds before PostgreSQL records its hash: a
+restarted relay observes the deterministic settlement id on-chain, records the
+recovered settlement, and does not broadcast again.
+
+Two live adversarial retries were made after milestone 1 settled:
+
+1. Reusing the exact deterministic id reverted with `DeliveraEscrow: settlement already processed`.
+2. Signing a different id and altered 500-bps split for the same milestone reverted with `DeliveraEscrow: milestone already settled`.
+
+The original configured relayer was restored in Base transaction
+`0x17fb8223550c149e42aebdb5b86484c731707c1a03ab2cf05d2d6008f33a2b42`.
+A fresh read confirmed the restored relayer, zero escrow balance, and all three
+settlement flags still true.
+
+## Solidity adversarial suite
+
+The local suite additionally proves unauthorized pre-funding, altered provider
+or allocation signatures, altered settlement amounts, non-relayer submission,
+60/40 partial dispute arithmetic, exact unrelated-fund isolation, replay
+protection, second-id/same-milestone rejection, and mixed
+release/dispute/cancellation accounting.
