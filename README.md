@@ -142,6 +142,14 @@ two-chain split):
 Full documents: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/DATABASE.md](docs/DATABASE.md) ·
 [docs/API.md](docs/API.md) · [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [MEMORY.md](MEMORY.md).
 
+Current public deployment (2026-10-18): frontend
+`https://delivera-frontend.vercel.app`, API `https://delivera-api-gideon.fly.dev`, GenLayer StudioNet
+contract `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`, and Base Sepolia escrow
+`0x2bA36CD29993cf4250adfb48F367E1893dcd43B5`. The deployed application/remediation source baseline
+is commit `e112763a7a59d1d346df32043425380e3ad29631`; later commits through this documentation refresh are
+documentation-only. Exact deployment receipts and funded-run evidence are in
+[docs/VERIFICATION.md](docs/VERIFICATION.md).
+
 ## The intelligent contract (`contracts/delivera.py`)
 
 One production contract, `DeliveraEscrow` — 23 public methods (9 view / 14 write), deployed with a

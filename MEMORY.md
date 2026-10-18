@@ -20,7 +20,7 @@ Current operational notes; authoritative evidence is in `docs/VERIFICATION.md`.
 - Base Sepolia escrow: `0x2bA36CD29993cf4250adfb48F367E1893dcd43B5`
 - Base deployment tx: `0x8af24446291a0efc4fe9641cafdde37cd54e65660e53c0ee4a053c13d9f8b212`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
-- Current application source baseline: `e112763a7a59d1d346df32043425380e3ad29631`
+- Deployed application/remediation source baseline: `e112763a7a59d1d346df32043425380e3ad29631`
 - Current Base relayer: `0x0EaD3C2e53Bf4c47B8875DcC1669E69Deee19d2D`
 - Current production frontend deployment: `dpl_G3uwJ844wgzGoEuovn2BFQf15gGt`
 
@@ -28,7 +28,7 @@ The prior StudioNet address `0xB193…D8F6` remains relevant only for the funded
 
 ## Current operational status
 
-- GitHub Actions is blocked before job startup by an account billing lock. Local CI-equivalent commands pass; the failed run link is in the verification file.
+- GitHub Actions is blocked before job startup by an account billing lock. The latest observed pre-refresh run is `39088023008` for commit `c708d28489d4de16360251a33fa396be9147af51`; local CI-equivalent commands pass, and the linked evidence is in the verification file.
 - The canonical Fly API is deployed on the currently authenticated account, reports server/database/Redis healthy, and has both chain integrations configured. The retired `delivera-api` and `delivera-api-v2` apps are not used by the frontend.
 - Transactional email is disabled until a valid Brevo API key and verified sender are supplied; in-app notifications work.
 - Production intentionally runs one always-on API machine so only one in-process relay scheduler executes.

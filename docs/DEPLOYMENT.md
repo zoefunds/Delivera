@@ -91,6 +91,7 @@ Then update `APP_URL`/`CORS_ORIGINS` Fly secrets with the final Vercel domain an
 ## 5. Current verified deployments
 
 - GenLayer StudioNet adjudication contract: `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`
+- GenLayer deployment transaction: `0x1690d4f69ee49e842b6f4eeab5fc04a5a8cebfce48401f3cc29354f5615a8190`
 - Base Sepolia escrow: `0x2bA36CD29993cf4250adfb48F367E1893dcd43B5`
 - Base deployment transaction: `0x8af24446291a0efc4fe9641cafdde37cd54e65660e53c0ee4a053c13d9f8b212` (block 48,259,013)
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
@@ -98,6 +99,7 @@ Then update `APP_URL`/`CORS_ORIGINS` Fly secrets with the final Vercel domain an
 - Postgres: Fly app `delivera-db-gideon`; Redis: Upstash `delivera-redis-gideon`
 - Current Base relayer: `0x0EaD3C2e53Bf4c47B8875DcC1669E69Deee19d2D`
 - Current production frontend deployment: `dpl_G3uwJ844wgzGoEuovn2BFQf15gGt`
+- Deployed application/remediation source baseline: `e112763a7a59d1d346df32043425380e3ad29631`
 
 The prior escrow `0xC7A0…7875` preserves the historical funded evidence. New
 agreements use the address above with deployment-aware keys and unconfirmed-

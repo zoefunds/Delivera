@@ -172,6 +172,10 @@ Base Sepolia. The frontend keeps `formatContractAmount` (18-decimal ledger displ
 - Current escrow → `0x2bA36CD29993cf4250adfb48F367E1893dcd43B5` on Base Sepolia; current
   GenLayer contract → `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa` on StudioNet. Future deployments
   must record both addresses, their receipts, and the exact source commit together.
+- The deployed application/remediation source baseline is
+  `e112763a7a59d1d346df32043425380e3ad29631`. Subsequent commits through the present documentation
+  refresh change documentation only; deployment receipts and evidence remain pinned in
+  [`VERIFICATION.md`](VERIFICATION.md).
 
 ## Scaling & Ops
 

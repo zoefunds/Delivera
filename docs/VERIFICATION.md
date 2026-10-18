@@ -92,9 +92,9 @@ on-chain deposit that is unactivated and past its recovery timestamp.
 
 ### Hosted CI status
 
-The latest GitHub Actions run before this documentation sync,
-[`39087992623`](https://github.com/zoefunds/Delivera/actions/runs/39087992623),
-was triggered for commit `31f58faf304e282a0f964608d538d060debd5e80`,
+The latest GitHub Actions run observed before this documentation refresh,
+[`39088023008`](https://github.com/zoefunds/Delivera/actions/runs/39088023008),
+was triggered for commit `c708d28489d4de16360251a33fa396be9147af51`,
 but GitHub did not start the job: `The job was not started because your
 account is locked due to a billing issue.` This is an account-level runner
 block, not a test failure; GitHub produced no job log. The commands and
@@ -138,12 +138,13 @@ mutation or placeholder agreement content.
    seven real records, including escrow-funded and contract-invited events with
    persisted unread state and timestamps.
 
-The frontend production environment was repaired during this run:
+The frontend production environment was repaired during this historical run:
 `NEXT_PUBLIC_API_URL` had been empty and is now
 `https://delivera-api-gideon.fly.dev`; `NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS` is the
-current address above. The latest Vercel production deployment
+current address above. The Vercel production deployment used by that run,
 `dpl_DeaASceUsx7XiWRF6pJ6Y4PDeBci` completed `READY` and was aliased to the
-public domain.
+public domain. It was later superseded by current deployment
+`dpl_G3uwJ844wgzGoEuovn2BFQf15gGt` when the canonical replacement backend was connected.
 
 ### Canonical production backend replacement
 

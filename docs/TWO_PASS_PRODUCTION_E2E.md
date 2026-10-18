@@ -6,7 +6,9 @@ Target frontend: `https://delivera-frontend.vercel.app`
 Target API: `https://delivera-api-gideon.fly.dev`  
 StudioNet contract: `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`
 
-Frontend deployment used for these passes: `dpl_DeaASceUsx7XiWRF6pJ6Y4PDeBci`
+Frontend deployment used for these historical passes: `dpl_DeaASceUsx7XiWRF6pJ6Y4PDeBci`.
+The current production deployment is `dpl_G3uwJ844wgzGoEuovn2BFQf15gGt`; this report intentionally
+preserves the exact deployment under test rather than rewriting historical evidence.
 
 The passes below were executed sequentially. Pass 2 was not started until Pass
 1 had reached StudioNet `FINALIZED`, had been confirmed into PostgreSQL, and
