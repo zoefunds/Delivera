@@ -49,8 +49,8 @@ escrow contract on Base Sepolia, and GenLayer's role narrowed to exactly what it
                                    │  (Fly.io)           │
                                    │  ├─ Postgres (Fly)  │
                                    │  ├─ Redis (Upstash) │
-                                   │  ├─ Tigris S3       │
-                                   │  └─ Brevo (email)   │
+                                   │  ├─ S3 (optional)   │
+                                   │  └─ Brevo (optional)│
                                    └───┬─────────────┬──┘
                 wallet-signed GenLayer txs             │ authority-signed decision
                 finalized before mirror                │ + transport relayer
@@ -153,9 +153,8 @@ Base Sepolia. The frontend keeps `formatContractAmount` (18-decimal ledger displ
 - Rate limiting (Upstash Redis, per-IP + per-account), CORS allowlist, helmet headers, zod input validation everywhere, Prisma (parameterized SQL).
 - Secrets only via Fly/Vercel secrets; never committed.
 - Audit log table for auth events, wallet export, contract actions.
-- Brevo transactional email is now best-effort notifications only (`email.notify`), sent to accounts
-  that happen to have an optional email on file — there is no verification or password-reset flow left
-  for it to send.
+- Brevo transactional email is an optional best-effort notification channel for accounts with an
+  email on file; the current production backend has it disabled. In-app notifications remain active.
 
 ## Deployment
 
@@ -175,6 +174,7 @@ Base Sepolia. The frontend keeps `formatContractAmount` (18-decimal ledger displ
 - Redis caching of chain reads (contract state polled + cached, TTL 15s).
 - The relay job runs in-process on a 30s poll — no separate deployment, but also no built-in alerting
   yet if a decision goes un-relayed for an unusually long time.
-- pino structured logs → Fly log shipping; /health + /metrics endpoints.
-- Backups: Fly Postgres daily snapshots; S3 versioning on Tigris bucket.
+- pino structured logs → Fly log shipping; `/health` readiness endpoint.
+- Backups: configure and monitor Fly Postgres snapshots. If optional object storage is enabled,
+  configure bucket versioning separately; the current production backend does not use a bucket.
 - CI: GitHub Actions — lint, typecheck, tests, contract lint on every push.

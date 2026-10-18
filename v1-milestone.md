@@ -1,5 +1,7 @@
 # Delivera v1 Milestone: Wallet-Native, Dual-Chain Escrow
 
+> **Archived migration record.** This file describes the original v1 wallet-native migration and includes retired addresses for historical traceability. It is not an operations guide. Use [`README.md`](README.md), [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), and [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for the current production architecture and evidence.
+
 This document records the architecture migration and bug-fix work completed in this
 milestone: moving Delivera from custodial, email/password-based accounts on a
 single native-GEN chain to a wallet-native system where users sign every
@@ -51,7 +53,7 @@ or moves any value:
   scoring, arbitration) is unchanged — GenLayer still decides every outcome,
   it just no longer moves money.
 
-A new Solidity contract, **`DeliveraEscrow.sol`**, deployed on Base Sepolia at
+A first-generation Solidity contract, **`DeliveraEscrow.sol`**, was deployed on Base Sepolia at
 **`0x604919F0AB7d0DEdc74102d36C83bB5078714383`**, holds the real USDC (token
 at **`0x036CbD53842c5426634e7929541eC2318f3dCF7e`**):
 - `fundEscrow(contractId, freelancer, amount)` — called directly by the
@@ -61,16 +63,21 @@ at **`0x036CbD53842c5426634e7929541eC2318f3dCF7e`**):
   mirror GenLayer's decisions.
 - The `bytes32` contract id is `ethers.id(chainContractId)`, computed
   identically on both backend and frontend.
-- 8 Hardhat tests cover fund/release/refund/dispute-split/double-release
-  protection; all passing.
+- The historical v1 suite contained 8 Hardhat tests. The current v2 escrow is
+  `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`; its current six-test suite adds
+  signed allocation binding, deterministic settlement identifiers, milestone
+  isolation, and on-chain replay protection.
 
 A backend relay job (`backend/src/jobs/relay.ts`) polls every 30 seconds for
 GenLayer decisions not yet relayed (approved milestones, cancelled contracts,
 resolved disputes) and executes the matching call on `DeliveraEscrow.sol`,
-signed by a dedicated relayer key (**`0xd07E3D1bAF59F1c09e2F8842786D89B716915f3E`**)
+signed at that time by relayer (**`0xd07E3D1bAF59F1c09e2F8842786D89B716915f3E`**)
 — a different key from any user's wallet and from the contract deployer
-(**`0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb`**). Idempotency is a stored
-`relayTxHash` / `refundRelayTxHash` column per row.
+(**`0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb`**). That v1 implementation
+relied on stored `relayTxHash` / `refundRelayTxHash` columns. The current v2
+contract additionally enforces deterministic on-chain settlement IDs and
+per-milestone allocation settlement. The current relayer is
+`0x0EaD3C2e53Bf4c47B8875DcC1669E69Deee19d2D`.
 
 Funding is verified, not trusted: `POST /api/v1/contracts/:id/fund` requires
 the client to have already called `fundEscrow` themselves and pass the
@@ -91,7 +98,9 @@ GenLayer identity — one wallet, not two.
   `verify_deliverable`, `approve_milestone`, `raise_dispute`,
   `add_dispute_statement`, and `resolve_dispute` directly with the connected
   wallet via `genlayer-js`, switching the wallet to GenLayer StudioNet first.
-- The backend no longer signs anything. Every route that used to write on a
+- The backend no longer signs ordinary user actions. It signs only the narrowly
+  scoped owner/verifier funding confirmation and Base authority/relay operations.
+  Every route that used to write on a
   user's behalf now re-reads GenLayer's actual on-chain state (polling with
   retry, since a read immediately after a write can lag behind consensus)
   to confirm the expected transition happened, then mirrors it into
@@ -108,15 +117,14 @@ GenLayer identity — one wallet, not two.
 
 ## 5. Backend redeployment
 
-The original Fly.io app and account hosting Delivera's backend became
-inaccessible. A new backend was stood up from scratch on the current Fly.io
-account:
-- App: **`delivera-api-v2`** (the original `delivera-api` name is
-  permanently held by the inaccessible account).
-- Fresh Postgres (`delivera-db-v2`), Tigris S3 storage, and the user's own
-  Upstash Redis instance, all wired via `fly secrets`.
-- `frontend/.env.example` / the deployed Vercel `NEXT_PUBLIC_API_URL` point
-  at the new backend.
+The migration initially used `delivera-api-v2`; it is now retired along with
+the older `delivera-api` deployment. Current production uses:
+
+- API: **`https://delivera-api-gideon.fly.dev`**
+- Fly Postgres: **`delivera-db-gideon`**
+- Upstash Redis: **`delivera-redis-gideon`**
+- Optional S3-compatible attachment storage is not currently configured.
+- The deployed frontend points `NEXT_PUBLIC_API_URL` at the canonical API.
 
 ## 6. Bugs found and fixed during this migration
 

@@ -13,19 +13,24 @@ Current operational notes; authoritative evidence is in `docs/VERIFICATION.md`.
 ## Current deployments — 2026-10-18
 
 - Frontend: `https://delivera-frontend.vercel.app`
-- Production API documented by the frontend: `https://delivera-api-v2.fly.dev`
+- Production API: `https://delivera-api-gideon.fly.dev`
+- Fly Postgres: `delivera-db-gideon`; Upstash Redis: `delivera-redis-gideon`
 - GenLayer StudioNet: `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`
 - GenLayer deployment tx: `0x1690d4f69ee49e842b6f4eeab5fc04a5a8cebfce48401f3cc29354f5615a8190`
 - Base Sepolia escrow v2: `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
-- Remediated source baseline: `6cffd60`
+- Current application source baseline: `187b5864970c4061a8722fdb0cae92be3df4b21a`
+- Current Base relayer: `0x0EaD3C2e53Bf4c47B8875DcC1669E69Deee19d2D`
+- Current production frontend deployment: `dpl_DeaASceUsx7XiWRF6pJ6Y4PDeBci`
 
 The prior StudioNet address `0xB193…D8F6` remains relevant only for the funded historical cross-chain evidence run documented in `docs/VERIFICATION.md`.
 
-## Current operational blockers
+## Current operational status
 
 - GitHub Actions is blocked before job startup by an account billing lock. Local CI-equivalent commands pass; the failed run link is in the verification file.
-- The live Fly apps are owned by a different Fly account from the locally authenticated CLI account. Their GenLayer and escrow secrets remain stale; update them to the addresses above and redeploy before using the new agreement through the public application.
+- The canonical Fly API is deployed on the currently authenticated account, reports server/database/Redis healthy, and has both chain integrations configured. The retired `delivera-api` and `delivera-api-v2` apps are not used by the frontend.
+- Transactional email is disabled until a valid Brevo API key and verified sender are supplied; in-app notifications work.
+- Production intentionally runs one always-on API machine so only one in-process relay scheduler executes.
 
 ## Consensus and lifecycle rules
 
@@ -41,3 +46,4 @@ The prior StudioNet address `0xB193…D8F6` remains relevant only for the funded
 - Nested contract records are JSON strings in `DynArray[str]`; storage indexes use `TreeMap`.
 - StudioNet is gasless but rate-limited. `genlayer-js` v1.x is required.
 - Temporary deployment account `delivera-throwaway` was removed after deployment; `anchor-deploy` is restored as the active CLI alias.
+- The New Contract page has a production-tested detailed autofill using a registered test provider, a unique title, and three objective milestones. It creates a real StudioNet draft; funding remains separate.

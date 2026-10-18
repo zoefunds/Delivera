@@ -9,7 +9,8 @@ in [`TWO_PASS_PRODUCTION_E2E.md`](TWO_PASS_PRODUCTION_E2E.md).
 ## Deployed evidence source and addresses
 
 - Funded live-run source commit: `d9d94c0b5b16edcc4982875f89dd53542b658e92`
-- Latest remediated source before the backend migration: `aadff224afe33477df0facdfe164504d393994d2`
+- Current application source before this documentation sync: `187b5864970c4061a8722fdb0cae92be3df4b21a`
+- Current GenLayer deployment source: `aadff224afe33477df0facdfe164504d393994d2`
 - Current GenLayer StudioNet contract: `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`
 - Current GenLayer deployment transaction: `0x1690d4f69ee49e842b6f4eeab5fc04a5a8cebfce48401f3cc29354f5615a8190`
 - Historical funded-run GenLayer contract: `0xB19331f411618Abb253a01Fa5b457D910c92D8F6`
@@ -51,9 +52,9 @@ Observed results:
 
 ### Hosted CI status
 
-GitHub Actions run
-[`39080795549`](https://github.com/zoefunds/Delivera/actions/runs/39080795549)
-was triggered for commit `42f590a8cfa3467513310bd00ba38e07fc208c42`,
+The latest GitHub Actions run before this documentation sync,
+[`39083558293`](https://github.com/zoefunds/Delivera/actions/runs/39083558293),
+was triggered for commit `187b5864970c4061a8722fdb0cae92be3df4b21a`,
 but GitHub did not start the job: `The job was not started because your
 account is locked due to a billing issue.` This is an account-level runner
 block, not a test failure; GitHub produced no job log. The commands and
@@ -88,7 +89,9 @@ mutation or placeholder agreement content.
    production agreement `39368b31-98c1-46cb-954a-50fabfe048af`. This test exposed
    stale backend state: PostgreSQL reported `FUNDED`, while the old configured
    GenLayer contract returned `DRAFT`/zero funded, and the API advertised retired
-   escrow `0x6049…4383`.
+   escrow `0x6049…4383`. This observation applied to the retired backend and led
+   to its replacement; the canonical backend now advertises the current
+   GenLayer and v2 Base escrow addresses.
 6. **Wallet:** the page's actual direct Base RPC path returned chain id `84532`
    and 121,740,000 base units (121.740000 USDC) for `0x7401…58Eb`.
 7. **Notifications:** authenticated production retrieval returned HTTP 200 and
@@ -98,8 +101,8 @@ mutation or placeholder agreement content.
 The frontend production environment was repaired during this run:
 `NEXT_PUBLIC_API_URL` had been empty and is now
 `https://delivera-api-gideon.fly.dev`; `NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS` is the
-current address above. The replacement Vercel deployment
-`dpl_7iiKPMP5U7Mj3bVb1t5PCuKYTZSS` completed `READY` and was aliased to the
+current address above. The latest Vercel production deployment
+`dpl_DeaASceUsx7XiWRF6pJ6Y4PDeBci` completed `READY` and was aliased to the
 public domain.
 
 ### Canonical production backend replacement
@@ -111,13 +114,16 @@ Fly Postgres app `delivera-db-gideon` and Upstash Redis database
 public `/health` read returned `healthy` with server/database/Redis `ok` and
 both chain integrations `configured`. A real wallet nonce, signature verify,
 and authenticated identity read each returned HTTP 200 against the fresh
-database. Vercel production deployment `dpl_7iiKPMP5U7Mj3bVb1t5PCuKYTZSS`
+database. Vercel production deployment `dpl_DeaASceUsx7XiWRF6pJ6Y4PDeBci`
 is `READY` and embeds the new API URL. Fly is intentionally scaled to one
 always-on API machine so there is a single in-process relay scheduler.
 
 ## Funded StudioNet to Base Sepolia demonstration
 
-The completed agreement was `delivera-2`, with Base allocations of 500,000,
+This funded agreement was `delivera-2` on the historical GenLayer deployment
+`0xB19331f411618Abb253a01Fa5b457D910c92D8F6`; identifiers are scoped to a
+GenLayer deployment, so it is distinct from the current deployment's newer
+`delivera-2`. Its Base allocations were 500,000,
 600,000, and 700,000 USDC base units (0.5, 0.6, and 0.7 USDC). Its provider was
 `0xCB6000A59ea2653CaCc2eC5c62f9ac9a341222fb`.
 
@@ -181,10 +187,12 @@ Two live adversarial retries were made after milestone 1 settled:
 1. Reusing the exact deterministic id reverted with `DeliveraEscrow: settlement already processed`.
 2. Signing a different id and altered 500-bps split for the same milestone reverted with `DeliveraEscrow: milestone already settled`.
 
-The original configured relayer was restored in Base transaction
+During the historical run, its original configured relayer was restored in Base transaction
 `0x17fb8223550c149e42aebdb5b86484c731707c1a03ab2cf05d2d6008f33a2b42`.
-A fresh read confirmed the restored relayer, zero escrow balance, and all three
-settlement flags still true.
+A read then confirmed zero escrow balance and all three settlement flags still
+true. After that demonstration, the canonical relayer was rotated to
+`0x0EaD3C2e53Bf4c47B8875DcC1669E69Deee19d2D` in transaction
+`0xe859c848aa50d86d779004c956e3bde20bd92315027576ff78567770834ceddd`.
 
 ## Solidity adversarial suite
 

@@ -43,6 +43,32 @@ user's connected wallet before these endpoints confirm and mirror them.
 Post-payment disputes are intentionally rejected; a paid allocation cannot be
 reversed using another milestone's funds.
 
+## Projects, notifications, reviews, and attachments
+
+All routes below require wallet authentication.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/projects` | List projects owned by the authenticated user |
+| POST | `/projects` | Create a project |
+| PATCH | `/projects/:id` | Update an owned project |
+| DELETE | `/projects/:id` | Delete an owned project |
+| GET | `/notifications` | Return the latest 50 notifications |
+| POST | `/notifications/:id/read` | Mark an owned notification read |
+| POST | `/reviews` | Create or update a 1–5 rating after completion/cancellation |
+| GET | `/reviews/user/:userId` | Read a user's aggregate and individual reviews |
+| POST | `/attachments` | Upload an allowed file, when optional object storage is configured |
+| GET | `/attachments/:id/url` | Request a signed download URL |
+
+Production currently returns `503 STORAGE_NOT_CONFIGURED` for uploads because
+optional S3-compatible attachment storage has not been enabled. Evidence may be
+submitted as URLs without this service.
+
+## Service health
+
+`GET /health` is outside `/api/v1` and reports server, PostgreSQL, Redis, and
+chain-configuration readiness. It does not require authentication.
+
 ## Relay guarantees
 
 The relay derives deterministic settlement ids from the GenLayer contract id,

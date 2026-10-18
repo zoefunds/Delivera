@@ -1,39 +1,50 @@
 # Delivera — Database Design (PostgreSQL via Prisma)
 
-Chain state (escrow balances, milestone verdicts, consensus records) lives on the intelligent contract; Postgres stores identity, off-chain metadata, and an indexed mirror of chain events for fast UX.
+PostgreSQL is an application index and recovery mirror. GenLayer StudioNet is authoritative for agreement decisions; `DeliveraEscrow` on Base Sepolia is authoritative for USDC custody, allocation settlement, and replay protection. The active Prisma schema is [`backend/prisma/schema.prisma`](../backend/prisma/schema.prisma).
 
-## Entities
+## Current entities
 
-| Table | Purpose | Key columns |
+| Prisma model | Purpose | Important fields |
 |---|---|---|
-| users | Accounts | id (uuid), email (unique, citext), password_hash (argon2id), name, role (CLIENT/PROVIDER/BOTH/ADMIN), email_verified_at |
-| wallets | Custodial wallets, 1:1 users | address (unique), encrypted_private_key, kdf_salt, iv, exported_at |
-| sessions | Refresh tokens | token_hash (unique), user_id, expires_at, revoked_at, ip, user_agent |
-| email_tokens | Verification + password reset | token_hash, purpose, expires_at, used_at |
-| projects | Grouping container | owner_id, title, description, status |
-| contracts | Mirror of on-chain contracts | chain_contract_id (unique), project_id, client_id, provider_id, title, total_atto (numeric(78,0)), status, dispute fields, tx hashes |
-| milestones | Mirror | contract_id, index, title, acceptance_criteria, evidence_type, amount_atto, status, attempts |
-| deliverables | Submission records | milestone_id, submitter_id, evidence_urls (jsonb), notes, attempt |
-| ai_evaluations | Verdict mirror | deliverable_id, verdict, score, criteria_met (jsonb), reasoning, consensus_round |
-| validator_decisions | Per-validator info surfaced by chain | evaluation_id, validator_label, agreed, detail (jsonb) |
-| consensus_records | Final consensus outcome per evaluation | evaluation_id, outcome, appealed, finalized_at |
-| transactions | On-chain tx audit | user_id, contract_id, kind, tx_hash, status, payload (jsonb) |
-| escrows | Funding mirror | contract_id, funded_atto, released_atto, refunded_atto |
-| disputes | Dispute mirror | contract_id, raised_by, reason, client_evidence, provider_evidence, resolution, split_bps |
-| reviews | Post-completion ratings | contract_id, reviewer_id, reviewee_id, rating (1-5), comment |
-| attachments | Tigris S3 files | owner_id, milestone_id?, s3_key, filename, mime, size |
-| notifications | In-app + email log | user_id, type, title, body, read_at, emailed_at |
-| audit_logs | Security audit trail | user_id?, action, ip, user_agent, detail (jsonb) |
-| api_keys | Programmatic access | user_id, key_hash, label, last_used_at, revoked_at |
+| `User` | Wallet-native account and optional profile | `walletAddress` (unique), optional legacy-compatible `email`, `name`, `role`, `avatarUrl` |
+| `Session` | Hashed refresh-token session | `tokenHash` (unique), `userId`, `expiresAt`, `revokedAt`, `ip`, `userAgent` |
+| `Project` | Client-owned grouping for agreements | `ownerId`, `title`, `description`, `status` |
+| `Contract` | Indexed GenLayer agreement and Base accounting mirror | `chainContractId` (unique), parties, `totalAtto`, lifecycle status, funding proof, mirrored funded/released/refunded totals, refund relay hash |
+| `Milestone` | Ordered milestone and relay checkpoint | `(contractId, index)` (unique), acceptance criteria, evidence type, `amountAtto`, status, attempts, `relayTxHash` |
+| `Deliverable` | Evidence submission history | `milestoneId`, `submitterId`, `evidenceUrls`, notes, attempt |
+| `AiEvaluation` | Structured verdict mirror | `deliverableId`, verdict, score, criteria result, reasoning, consensus round |
+| `Dispute` | Milestone-specific arbitration mirror | `chainDisputeIndex`, `milestoneIndex`, statements, finalized basis-point split, resolution summary, `relayTxHash` |
+| `Transaction` | Application transaction audit record | user/contract references, kind, chain hash, status, JSON payload |
+| `Review` | Post-agreement rating | contract, reviewer, reviewee, rating, comment |
+| `Attachment` | Optional uploaded-file metadata | owner, optional milestone, storage key, filename, MIME type, size |
+| `Notification` | In-app notification and optional email-delivery state | user, type, title, body, `readAt`, `emailedAt` |
+| `AuditLog` | Security and operational audit trail | optional user, action, IP, user agent, JSON detail |
+| `ApiKey` | Hashed programmatic credential | user, `keyHash` (unique), label, last use, revocation |
 
-## Constraints & Indexes
+There are no custodial-wallet, email-token, validator-decision, consensus-record, or escrow-balance tables. Per-validator consensus and financial balances must be read from their respective chains, not invented from PostgreSQL rows.
 
-- FKs on every relation with `onDelete` rules (cascade for owned data, restrict for financial mirrors).
-- `numeric(78,0)` for all atto amounts (u256-safe).
-- Unique: users.email, wallets.address, wallets.user_id, contracts.chain_contract_id, (milestones.contract_id, index), sessions.token_hash, api_keys.key_hash.
-- Indexes: contracts(client_id), contracts(provider_id), contracts(status), milestones(contract_id), deliverables(milestone_id), notifications(user_id, read_at), audit_logs(user_id, created_at), transactions(tx_hash), email_tokens(token_hash).
-- created_at/updated_at on all tables.
+## Financial recovery rules
 
-## Migration strategy
+- Ledger amounts in PostgreSQL use `Decimal(78,0)` and the inherited 18-decimal contract convention. Base USDC uses 6 decimals; relay code performs the explicit conversion.
+- PostgreSQL relay hashes are checkpoints, not the replay-protection boundary. Before retrying an uncertain payout, the relay derives the deterministic settlement identifier and reads `processedSettlements` and the milestone allocation from Base.
+- If Base already processed a settlement but PostgreSQL missed the receipt, the relay records `RECOVERED:<settlementId>` and reconciles the mirror without broadcasting another transfer.
+- Funding confirmation stores the Base transaction hash and binding data only after verifying the emitted funding event and the finalized GenLayer state.
+- A dispute is tied to its exact milestone index. Its finalized split applies only to that milestone's remaining allocation.
 
-Prisma Migrate: `prisma migrate dev` locally, `prisma migrate deploy` on Fly release command. Schema is the single source of truth; never edit the DB by hand.
+## Constraints and indexes
+
+- Foreign keys define explicit cascade or restrict behavior for owned and financial records.
+- Unique constraints cover wallet addresses, session hashes, chain contract IDs, `(contractId, index)`, review pairs, and API-key hashes.
+- Query indexes cover agreement parties/status, project ownership, milestone and deliverable relationships, dispute lookup, transaction hashes, notifications, and audit timestamps.
+- Financial mirrors use exact decimal columns; floating-point values are never used for money.
+
+## Migration and production
+
+The canonical database is Fly Postgres app `delivera-db-gideon`. Apply checked-in migrations with:
+
+```bash
+cd backend
+npx prisma migrate deploy
+```
+
+Use `prisma migrate dev` only for local development. Never edit production financial mirrors by hand; reconcile them from finalized GenLayer reads and Base receipts/state.

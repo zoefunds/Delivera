@@ -6,10 +6,18 @@ Target frontend: `https://delivera-frontend.vercel.app`
 Target API: `https://delivera-api-gideon.fly.dev`  
 StudioNet contract: `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`
 
+Current production frontend deployment: `dpl_DeaASceUsx7XiWRF6pJ6Y4PDeBci`
+
 The passes below were executed sequentially. Pass 2 was not started until Pass
 1 had reached StudioNet `FINALIZED`, had been confirmed into PostgreSQL, and
 all application-section reads had completed. Test wallets signed real nonce
 messages, and both agreements are live StudioNet records rather than fixtures.
+
+The New Agreement page now exposes **Autofill detailed test contract**. It
+fills a unique timestamped version of the Pass 1 cold-chain agreement, uses the
+registered provider `0x1A321F1615D5Ff2F236620647aF1E30a4fAcCB7d`, and supplies
+three detailed criteria/evidence milestones totaling 0.36 ledger units. Users
+must still review the data and sign the StudioNet transaction themselves.
 
 ## Sections covered in each pass
 

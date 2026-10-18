@@ -56,12 +56,10 @@ fly redis create --name delivera-redis-gideon --region iad       # record REDIS_
 fly secrets set --app delivera-api-gideon \
   JWT_SECRET="$(openssl rand -hex 32)" \
   REDIS_URL="redis://default:<password>@<host>.upstash.io:6379" \
-  BREVO_API_KEY="<brevo key>" \
-  BREVO_SENDER_EMAIL="<verified sender>" \
+  BREVO_API_KEY="disabled-no-production-mail-provider" \
+  BREVO_SENDER_EMAIL="noreply@delivera.app" \
   APP_URL="https://<your-vercel-domain>" \
   CORS_ORIGINS="https://<your-vercel-domain>" \
-  S3_ENDPOINT="https://fly.storage.tigris.dev" \
-  S3_BUCKET="delivera-files" \
   GENLAYER_CONTRACT_ADDRESS="<deployed address>" \
   GENLAYER_OWNER_PRIVATE_KEY="<genlayer deployer key>" \
   DELIVERA_ESCROW_ADDRESS="<base escrow v2 address>" \
@@ -74,6 +72,10 @@ curl https://delivera-api-gideon.fly.dev/health
 
 Generate `JWT_SECRET` once and back it up; rotating it invalidates active JWTs.
 Delivera does not store user wallet private keys.
+Replace the disabled Brevo value with a real API key and verified sender only
+when transactional email is required. In-app notifications do not depend on it.
+If file uploads are enabled, separately set `S3_ENDPOINT`, `S3_BUCKET`,
+`AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`.
 
 ## 4. Frontend → Vercel
 
@@ -93,9 +95,13 @@ Then update `APP_URL`/`CORS_ORIGINS` Fly secrets with the final Vercel domain an
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 - Backend: `https://delivera-api-gideon.fly.dev` (Fly app `delivera-api-gideon`)
 - Postgres: Fly app `delivera-db-gideon`; Redis: Upstash `delivera-redis-gideon`
+- Current Base relayer: `0x0EaD3C2e53Bf4c47B8875DcC1669E69Deee19d2D`
+- Current production frontend deployment: `dpl_DeaASceUsx7XiWRF6pJ6Y4PDeBci`
 
-These addresses correspond to the funded evidence run in `docs/VERIFICATION.md`.
-For any later deployment, replace both application addresses together and
+The Base escrow is the one exercised by the funded historical run. The current
+GenLayer address is the later remediated deployment; the historical GenLayer
+address remains identified separately in `docs/VERIFICATION.md`. For any later
+deployment, replace both application addresses together and
 record the source commit and deployment receipts.
 
 Whenever the contract is (re)deployed:

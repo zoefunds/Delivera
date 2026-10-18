@@ -91,10 +91,10 @@ that history). GenLayer no longer moves any value at all — `_send_gen` is now 
 |---|---|---|
 | Intelligent Contract (adjudication) | Python (genlayer-py-std), single contract, no longer moves value | GenLayer StudioNet |
 | Escrow Contract (custody) | Solidity, holds real USDC; settlement requires a relayer call plus an exact authority signature | Base Sepolia |
-| Backend API | Node 22, Fastify 5, Prisma, PostgreSQL, Upstash Redis, Brevo, Tigris S3, ethers v6 | Fly.io |
+| Backend API | Node 22, Fastify 5, Prisma, PostgreSQL, Upstash Redis, optional Brevo/S3, ethers v6 | Fly.io |
 | Frontend | Next.js 15 (App Router), Tailwind, Reown AppKit wallet connect, dark mode | Vercel |
 | Login wallet | The user's own external wallet (MetaMask etc.), connected via Reown AppKit; signs in and funds escrow | User-held |
-| GenLayer signing wallet | Custodial secp256k1, AES-256-GCM encrypted at rest, exportable; signs GenLayer calls only, never holds real money | Postgres |
+| GenLayer signing wallet | The same user-held external wallet; ordinary lifecycle calls are never signed by the backend | User-held |
 
 ```
 ┌──────────────┐  connect+sign   ┌────────────────┐
@@ -108,8 +108,8 @@ that history). GenLayer no longer moves any value at all — `_send_gen` is now 
                                  │  (Fly.io)           │
                                  │  ├─ PostgreSQL (Fly)│
                                  │  ├─ Redis (Upstash) │
-                                 │  ├─ Tigris S3       │
-                                 │  └─ Brevo (email)   │
+                                 │  ├─ S3 (optional)   │
+                                 │  └─ Brevo (optional)│
                                  └───┬─────────────┬──┘
                     user-signed GenLayer txs         │ signed authority decision
                     finalized before mirror          │ + separate transport relay
@@ -134,7 +134,8 @@ two-chain split):
   whether money should move, but not the money itself.
 - **Escrow contract (Base Sepolia) owns**: actual custody of USDC and the real transfers — funding
   (called directly by the client's wallet), release, refund, and dispute-split payout (all three
-  called only by the relayer, only in response to a GenLayer decision already mirrored in Postgres).
+  called only by the relayer with an exact authority-signed instruction derived from finalized
+  GenLayer state; Postgres is a recovery/query mirror, not the authorization boundary).
 - **External sources own**: the deliverable evidence itself (live URLs) — validators re-fetch it
   independently every time; the contract never trusts submitted text alone.
 
@@ -324,7 +325,7 @@ Errors are a uniform `{ "error": { "code", "message", "details?" } }` envelope. 
 | Milestones | submit deliverable, trigger AI verification, manual approve |
 | Disputes | raise, add statement, resolve |
 | Evaluations | full on-chain evaluation/consensus audit trail per contract |
-| Misc | projects CRUD, notifications, reviews, file attachments (Tigris S3) |
+| Misc | projects CRUD, notifications, reviews, optional S3-compatible file attachments |
 
 There is no more email/password auth surface at all: no `register`, `verify-email`,
 `forgot-password`, or `reset-password` endpoints, and no `deposit`/`withdraw` funds endpoints — funding
