@@ -9,7 +9,7 @@ in [`TWO_PASS_PRODUCTION_E2E.md`](TWO_PASS_PRODUCTION_E2E.md).
 ## Deployed evidence source and addresses
 
 - Funded live-run source commit: `d9d94c0b5b16edcc4982875f89dd53542b658e92`
-- Current application source before this documentation sync: `187b5864970c4061a8722fdb0cae92be3df4b21a`
+- Current deployed remediation source: `e112763a7a59d1d346df32043425380e3ad29631`
 - Current GenLayer deployment source: `aadff224afe33477df0facdfe164504d393994d2`
 - Current GenLayer StudioNet contract: `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`
 - Current GenLayer deployment transaction: `0x1690d4f69ee49e842b6f4eeab5fc04a5a8cebfce48401f3cc29354f5615a8190`

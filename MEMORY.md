@@ -20,7 +20,7 @@ Current operational notes; authoritative evidence is in `docs/VERIFICATION.md`.
 - Base Sepolia escrow: `0x2bA36CD29993cf4250adfb48F367E1893dcd43B5`
 - Base deployment tx: `0x8af24446291a0efc4fe9641cafdde37cd54e65660e53c0ee4a053c13d9f8b212`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
-- Current application source baseline: `187b5864970c4061a8722fdb0cae92be3df4b21a`
+- Current application source baseline: `e112763a7a59d1d346df32043425380e3ad29631`
 - Current Base relayer: `0x0EaD3C2e53Bf4c47B8875DcC1669E69Deee19d2D`
 - Current production frontend deployment: `dpl_G3uwJ844wgzGoEuovn2BFQf15gGt`
 
