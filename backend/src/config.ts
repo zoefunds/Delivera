@@ -13,6 +13,7 @@ const schema = z.object({
   APP_URL: z.string().url().default("http://localhost:3000"),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   GENLAYER_RPC_URL: z.string().url().default("https://studio.genlayer.com/api"),
+  GENLAYER_CHAIN_ID: z.coerce.number().int().positive().default(61999),
   GENLAYER_CONTRACT_ADDRESS: z.string().default(""),
   GENLAYER_OWNER_PRIVATE_KEY: z.string().default(""),
   // Base Sepolia payment layer (contracts/base/DeliveraEscrow.sol, deployed

@@ -82,12 +82,22 @@ async function assertEscrowKeyConfiguration(): Promise<void> {
   keyConfigurationVerified = true;
 }
 
-/** GenLayer chainContractId values are opaque strings; the escrow contract
- * keys balances by bytes32, so hash the id deterministically the same way
- * everywhere it's used (backend and frontend both call this — see
- * frontend/src/lib/escrow.ts). */
-export function contractIdToBytes32(chainContractId: string): string {
-  return ethers.id(chainContractId);
+/** Domain-separated escrow key. Agreement counters restart on each GenLayer
+ * deployment, so the raw `delivera-N` id is not globally unique. Binding the
+ * chain and adjudicator address prevents a historical deployment from
+ * reserving, settling, or recovering a current deployment's funds. */
+export function contractIdToBytes32(
+  chainContractId: string,
+  genLayerContractAddress = config.GENLAYER_CONTRACT_ADDRESS,
+  genLayerChainId = config.GENLAYER_CHAIN_ID,
+): string {
+  if (!ethers.isAddress(genLayerContractAddress) || genLayerContractAddress === ethers.ZeroAddress) {
+    throw new Error("GENLAYER_CONTRACT_ADDRESS must be a non-zero address");
+  }
+  return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    ["string", "uint256", "address", "string"],
+    ["DELIVERA_AGREEMENT_V1", genLayerChainId, ethers.getAddress(genLayerContractAddress), chainContractId],
+  ));
 }
 
 /**
@@ -97,7 +107,10 @@ export function contractIdToBytes32(chainContractId: string): string {
  * deterministic settlement id before broadcasting.
  */
 export function settlementId(chainContractId: string, kind: "release" | "dispute" | "refund", index: number): string {
-  return ethers.id(`${chainContractId}:${kind}:${index}`);
+  return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    ["string", "bytes32", "string", "uint256"],
+    ["DELIVERA_SETTLEMENT_V1", contractIdToBytes32(chainContractId), kind, index],
+  ));
 }
 
 async function signSettlement(chainContractId: string, id: string, action: number, index: bigint, amount: bigint, bps: bigint) {
@@ -109,11 +122,37 @@ async function signSettlement(chainContractId: string, id: string, action: numbe
 
 export async function createFundingAuthorization(
   chainContractId: string, client: string, freelancer: string, allocations: bigint[],
-): Promise<{ deadline: string; signature: string }> {
+): Promise<{ deadline: string; signature: string; escrowKey: string }> {
   await assertEscrowKeyConfiguration();
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800);
-  const digest = await getReadContract().fundingDigest(contractIdToBytes32(chainContractId), client, freelancer, allocations, deadline);
-  return { deadline: deadline.toString(), signature: await getAuthorityWallet().signMessage(ethers.getBytes(digest)) };
+  const escrowKey = contractIdToBytes32(chainContractId);
+  const digest = await getReadContract().fundingDigest(escrowKey, client, freelancer, allocations, deadline);
+  return { deadline: deadline.toString(), signature: await getAuthorityWallet().signMessage(ethers.getBytes(digest)), escrowKey };
+}
+
+/** Activate a deposit only after GenLayer's owner-only funding confirmation
+ * finalized. The authority and relayer remain distinct; the relayer merely
+ * transports the authority's domain-separated signature. */
+export async function activateEscrow(chainContractId: string): Promise<string> {
+  await assertEscrowKeyConfiguration();
+  const key = contractIdToBytes32(chainContractId);
+  const read = getReadContract();
+  if (await read.isActivated(key)) return "ALREADY_ACTIVATED";
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+  const digest = await read.activationDigest(key, deadline);
+  const signature = await getAuthorityWallet().signMessage(ethers.getBytes(digest));
+  const tx = await getRelayerContract().activateEscrow(key, deadline, signature);
+  const receipt = await tx.wait();
+  if (!receipt || receipt.status !== 1) throw new Error(`activateEscrow transaction failed for contract ${chainContractId}`);
+  return tx.hash as string;
+}
+
+export async function getFundingRecoveryState(chainContractId: string): Promise<{
+  escrowKey: string; fundedAt: string; activated: boolean; recoverableAt: string; recovered: boolean;
+}> {
+  const escrowKey = contractIdToBytes32(chainContractId);
+  const [fundedAt, activated, recoverableAt, recovered] = await getReadContract().fundingRecoveryState(escrowKey);
+  return { escrowKey, fundedAt: String(fundedAt), activated: Boolean(activated), recoverableAt: String(recoverableAt), recovered: Boolean(recovered) };
 }
 
 export async function releaseMilestone(chainContractId: string, milestoneIndex: number, amountUsdc: bigint): Promise<{ txHash: string; settlementId: string }> {

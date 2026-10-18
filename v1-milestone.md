@@ -63,10 +63,11 @@ at **`0x036CbD53842c5426634e7929541eC2318f3dCF7e`**):
   mirror GenLayer's decisions.
 - The `bytes32` contract id is `ethers.id(chainContractId)`, computed
   identically on both backend and frontend.
-- The historical v1 suite contained 8 Hardhat tests. The current v2 escrow is
-  `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`; its current six-test suite adds
-  signed allocation binding, deterministic settlement identifiers, milestone
-  isolation, and on-chain replay protection.
+- The historical v1 suite contained 8 Hardhat tests. The later v2 escrow at
+  `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875` added signed allocation binding,
+  deterministic settlement identifiers, milestone isolation, and on-chain
+  replay protection. Current production uses the deployment-aware escrow
+  listed in `docs/DEPLOYMENT.md`.
 
 A backend relay job (`backend/src/jobs/relay.ts`) polls every 30 seconds for
 GenLayer decisions not yet relayed (approved milestones, cancelled contracts,

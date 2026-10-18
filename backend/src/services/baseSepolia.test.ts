@@ -8,12 +8,14 @@ vi.mock("../config.js", () => ({
     DELIVERA_ESCROW_ADDRESS: ethers.Wallet.createRandom().address,
     BASE_SEPOLIA_RELAYER_PRIVATE_KEY: "",
     BASE_SEPOLIA_DECISION_AUTHORITY_PRIVATE_KEY: "",
+    GENLAYER_CHAIN_ID: 61999,
+    GENLAYER_CONTRACT_ADDRESS: "0x1111111111111111111111111111111111111111",
   },
 }));
 vi.mock("../lib/logger.js", () => ({ logger: { info: vi.fn(), error: vi.fn() } }));
 
 import { DELIVERA_ESCROW_ABI } from "../lib/escrowAbi.js";
-import { contractIdToBytes32, verifyEscrowFundingReceipt } from "./baseSepolia.js";
+import { contractIdToBytes32, settlementId, verifyEscrowFundingReceipt } from "./baseSepolia.js";
 
 describe("verifyEscrowFundingReceipt", () => {
   const escrow = ethers.Wallet.createRandom().address;
@@ -43,5 +45,15 @@ describe("verifyEscrowFundingReceipt", () => {
     expect(verifyEscrowFundingReceipt(receipt(attacker), escrow, "agreement-1", client, provider, 1_000_000n, allocations).ok).toBe(false);
     expect(verifyEscrowFundingReceipt(receipt(client, 999_999n), escrow, "agreement-1", client, provider, 1_000_000n, allocations).ok).toBe(false);
     expect(verifyEscrowFundingReceipt(receipt(client, 1_000_000n, [1_000_000n]), escrow, "agreement-1", client, provider, 1_000_000n, allocations).ok).toBe(false);
+  });
+
+  it("namespaces identical agreement ids by GenLayer deployment", () => {
+    const first = contractIdToBytes32("delivera-1", "0x1111111111111111111111111111111111111111", 61999);
+    const second = contractIdToBytes32("delivera-1", "0x2222222222222222222222222222222222222222", 61999);
+    const otherChain = contractIdToBytes32("delivera-1", "0x1111111111111111111111111111111111111111", 62000);
+    expect(first).not.toBe(second);
+    expect(first).not.toBe(otherChain);
+    expect(settlementId("delivera-1", "release", 0)).not.toBe(settlementId("delivera-1", "release", 1));
+    expect(settlementId("delivera-1", "release", 0)).not.toBe(settlementId("delivera-1", "dispute", 0));
   });
 });

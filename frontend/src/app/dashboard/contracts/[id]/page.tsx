@@ -3,8 +3,8 @@
 import { use, useCallback, useEffect, useState } from "react";
 import { useAppKitAccount, useAppKitProvider } from "@reown/appkit/react";
 import { api, formatContractAmount, ApiError } from "@/lib/api";
-import { fundEscrowOnChain } from "@/lib/escrow";
-import { genlayerWrite } from "@/lib/genlayer";
+import { contractIdToBytes32, fundEscrowOnChain, recoverUnconfirmedFundingOnChain } from "@/lib/escrow";
+import { GENLAYER_CONTRACT_ADDRESS, genlayerWrite } from "@/lib/genlayer";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Icon } from "@/components/Icon";
 
@@ -33,7 +33,10 @@ interface ContractDetail {
   refundRelayTxHash: string | null;
   chain: { status?: string; milestones?: ChainMilestone[] } | null;
   provider: { walletAddress: string | null } | null;
-  escrow: { address: string | null; usdcAddress: string };
+  escrow: {
+    address: string | null; usdcAddress: string;
+    fundingRecovery: null | { escrowKey: string; fundedAt: string; activated: boolean; recoverableAt: string; recovered: boolean };
+  };
 }
 
 const BASESCAN_TX = "https://sepolia.basescan.org/tx/";
@@ -131,15 +134,19 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       if (!walletProvider || !address) throw new Error("Connect your wallet first");
       // Ledger amounts are 18-decimal dollar-equivalent values; the real
       // escrow holds 6-decimal USDC — see formatContractAmount in lib/api.ts.
-      const authorization = await api.post<{ deadline: string; signature: string; allocations: string[] }>(
+      const authorization = await api.post<{ deadline: string; signature: string; allocations: string[]; escrowKey: string }>(
         `/contracts/${id}/funding-authorization`,
       );
+      const expectedEscrowKey = contractIdToBytes32(contract.chainContractId, GENLAYER_CONTRACT_ADDRESS);
+      if (authorization.escrowKey.toLowerCase() !== expectedEscrowKey.toLowerCase()) {
+        throw new Error("Funding authorization does not match this GenLayer deployment");
+      }
       setBusyStage("chain");
       const fundTxHash = await fundEscrowOnChain(
         walletProvider,
         contract.escrow.address,
         contract.escrow.usdcAddress,
-        contract.chainContractId,
+        authorization.escrowKey,
         contract.provider.walletAddress,
         authorization.allocations.map(BigInt),
         BigInt(authorization.deadline),
@@ -153,6 +160,21 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     } finally {
       setBusyAction("");
       setBusyStage("");
+    }
+  }
+
+  async function recoverFunding() {
+    const recovery = contract?.escrow.fundingRecovery;
+    if (!contract?.escrow.address || !recovery || !walletProvider) return;
+    setBusyAction("recover-funding");
+    setError("");
+    try {
+      await recoverUnconfirmedFundingOnChain(walletProvider, contract.escrow.address, recovery.escrowKey);
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Funding recovery failed");
+    } finally {
+      setBusyAction("");
     }
   }
 
@@ -198,6 +220,20 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                 ? "Confirming with Delivera…"
                 : "Depositing USDC & confirming on GenLayer…"
               : "Fund escrow"}
+          </button>
+        )}
+        {isClient && contract.escrow.fundingRecovery &&
+          BigInt(contract.escrow.fundingRecovery.fundedAt) > 0n &&
+          !contract.escrow.fundingRecovery.activated &&
+          !contract.escrow.fundingRecovery.recovered && (
+          <button
+            className="btn-secondary"
+            disabled={!!busyAction || Math.floor(Date.now() / 1000) < Number(contract.escrow.fundingRecovery.recoverableAt)}
+            title={`Available after ${new Date(Number(contract.escrow.fundingRecovery.recoverableAt) * 1000).toLocaleString()}`}
+            onClick={() => confirm("Recover this unconfirmed deposit? This is allowed only because adjudication was never activated.") && recoverFunding()}
+          >
+            <Icon name="undo" />
+            {busyAction === "recover-funding" ? "Recovering…" : "Recover unconfirmed deposit"}
           </button>
         )}
         {isProvider && chainStatus === "FUNDED" && (

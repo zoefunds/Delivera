@@ -29,6 +29,8 @@ There are no custodial-wallet, email-token, validator-decision, consensus-record
 - PostgreSQL relay hashes are checkpoints, not the replay-protection boundary. Before retrying an uncertain payout, the relay derives the deterministic settlement identifier and reads `processedSettlements` and the milestone allocation from Base.
 - If Base already processed a settlement but PostgreSQL missed the receipt, the relay records `RECOVERED:<settlementId>` and reconciles the mirror without broadcasting another transfer.
 - Funding confirmation stores the Base transaction hash and binding data only after verifying the emitted funding event and the finalized GenLayer state.
+- Base keys and settlement identifiers include the GenLayer chain ID and Intelligent Contract address, so identical local IDs from different deployments remain independent.
+- Unconfirmed-deposit recovery is enforced by Base state and time, not a database flag: only the funding client may reclaim a never-activated, entirely untouched deposit after seven days.
 - A dispute is tied to its exact milestone index. Its finalized split applies only to that milestone's remaining allocation.
 
 ## Constraints and indexes

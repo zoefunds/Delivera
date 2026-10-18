@@ -1,6 +1,6 @@
 "use client";
 
-import { BrowserProvider, Contract, id as ethersId } from "ethers";
+import { AbiCoder, BrowserProvider, Contract, getAddress, isAddress, keccak256, ZeroAddress } from "ethers";
 
 const BASE_SEPOLIA_CHAIN_ID_HEX = "0x14a34"; // 84532
 
@@ -59,6 +59,7 @@ export async function ensureBaseSepolia(eip1193: Eip1193Provider): Promise<void>
 /** Must match backend/src/lib/escrowAbi.ts and contracts/base/contracts/DeliveraEscrow.sol exactly. */
 export const DELIVERA_ESCROW_ABI = [
   "function fundEscrow(bytes32 contractId, address freelancer, uint256[] allocations, uint256 deadline, bytes authoritySignature) external",
+  "function recoverUnconfirmedFunding(bytes32 contractId) external",
   "function remainingEscrow(bytes32 contractId) external view returns (uint256)",
 ] as const;
 
@@ -68,10 +69,16 @@ export const ERC20_ABI = [
   "function balanceOf(address account) external view returns (uint256)",
 ] as const;
 
-/** Same hash the backend uses (ethers.id) to turn a GenLayer chainContractId
- * into the escrow's bytes32 key — must stay identical on both sides. */
-export function contractIdToBytes32(chainContractId: string): string {
-  return ethersId(chainContractId);
+/** Deployment-aware key shared with the backend. Raw agreement counters are
+ * only unique inside one Intelligent Contract deployment. */
+export function contractIdToBytes32(chainContractId: string, genLayerContractAddress: string, genLayerChainId = 61999): string {
+  if (!isAddress(genLayerContractAddress) || genLayerContractAddress === ZeroAddress) {
+    throw new Error("The GenLayer contract address is not configured");
+  }
+  return keccak256(AbiCoder.defaultAbiCoder().encode(
+    ["string", "uint256", "address", "string"],
+    ["DELIVERA_AGREEMENT_V1", genLayerChainId, getAddress(genLayerContractAddress), chainContractId],
+  ));
 }
 
 /**
@@ -109,7 +116,7 @@ export async function fundEscrowOnChain(
   eip1193: Eip1193Provider,
   escrowAddress: string,
   usdcAddress: string,
-  chainContractId: string,
+  escrowKey: string,
   freelancerAddress: string,
   allocations: bigint[],
   deadline: bigint,
@@ -130,9 +137,25 @@ export async function fundEscrowOnChain(
   }
 
   const escrow = new Contract(escrowAddress, DELIVERA_ESCROW_ABI, signer);
-  const key = contractIdToBytes32(chainContractId);
-  const tx = await escrow.fundEscrow(key, freelancerAddress, allocations, deadline, authoritySignature);
+  const tx = await escrow.fundEscrow(escrowKey, freelancerAddress, allocations, deadline, authoritySignature);
   const receipt = await tx.wait();
   assertConfirmed(receipt, "fundEscrow");
+  return tx.hash as string;
+}
+
+/** Recover a deposit only when the escrow itself proves it was never
+ * activated and the seven-day confirmation deadline has elapsed. */
+export async function recoverUnconfirmedFundingOnChain(
+  eip1193: Eip1193Provider,
+  escrowAddress: string,
+  escrowKey: string,
+): Promise<string> {
+  await ensureBaseSepolia(eip1193);
+  const browserProvider = new BrowserProvider(eip1193 as ConstructorParameters<typeof BrowserProvider>[0]);
+  const signer = await browserProvider.getSigner();
+  const escrow = new Contract(escrowAddress, DELIVERA_ESCROW_ABI, signer);
+  const tx = await escrow.recoverUnconfirmedFunding(escrowKey);
+  const receipt = await tx.wait();
+  assertConfirmed(receipt, "recoverUnconfirmedFunding");
   return tx.hash as string;
 }

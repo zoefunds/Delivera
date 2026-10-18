@@ -26,8 +26,8 @@ or wallet-export endpoint in the current architecture.
 | POST | `/contracts/confirm-create` | Mirror a wallet-signed GenLayer creation |
 | GET | `/contracts` | List agreements for the authenticated party |
 | GET | `/contracts/:id` | Agreement, milestones, disputes, chain and escrow metadata |
-| POST | `/contracts/:id/funding-authorization` | Sign the exact client/provider/id/allocation binding; draft client only |
-| POST | `/contracts/:id/fund` | Verify the Base receipt, record GenLayer funding through the owner/verifier, and mirror it |
+| POST | `/contracts/:id/funding-authorization` | Sign the exact deployment/client/provider/allocation binding and return its escrow key; draft client only |
+| POST | `/contracts/:id/fund` | Verify the Base receipt, finalize GenLayer funding, activate Base adjudication, and mirror it |
 | POST | `/contracts/:id/accept` | Confirm a provider-signed GenLayer acceptance |
 | POST | `/contracts/:id/cancel` | Confirm cancellation; relay later submits the signed exact refund |
 | POST | `/contracts/:id/milestones/:index/submit` | Confirm provider evidence submission |
@@ -71,8 +71,15 @@ chain-configuration readiness. It does not require authentication.
 
 ## Relay guarantees
 
-The relay derives deterministic settlement ids from the GenLayer contract id,
-action, and milestone/dispute index. Before retrying a row with no saved tx
+The relay derives deterministic settlement ids from the deployment-aware
+escrow key, action, and milestone/dispute index. Before retrying a row with no saved tx
 hash it checks `processedSettlements` on Base, reconciles an already-executed
 instruction, and updates the row plus accounting atomically. Solidity remains
 the authoritative replay and allocation boundary.
+
+The escrow key is the ABI-encoded hash of `DELIVERA_AGREEMENT_V1`, GenLayer
+chain ID, Intelligent Contract address, and local agreement ID. It is not the
+hash of `delivera-N` alone. If a verified Base deposit never reaches finalized
+GenLayer confirmation and activation, the client wallet may call
+`recoverUnconfirmedFunding` directly after seven days. This method is rejected
+forever once activation occurs or any entitlement is consumed.

@@ -1,7 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-describe("DeliveraEscrow v2", function () {
+describe("DeliveraEscrow deployment-aware custody", function () {
   const ID = ethers.id("delivera-1");
   const ALLOCATIONS = [400_000n, 350_000n, 250_000n];
 
@@ -16,18 +16,23 @@ describe("DeliveraEscrow v2", function () {
     await usdc.connect(client).approve(await escrow.getAddress(), ethers.MaxUint256);
     await usdc.connect(attacker).approve(await escrow.getAddress(), ethers.MaxUint256);
     const deadline = BigInt((await ethers.provider.getBlock("latest")).timestamp + 3600);
-    async function fundingSig(funder = client, freelancer = provider, allocations = ALLOCATIONS) {
-      const digest = await escrow.fundingDigest(ID, funder.address, freelancer.address, allocations, deadline);
+    async function fundingSig(funder = client, freelancer = provider, allocations = ALLOCATIONS, id = ID) {
+      const digest = await escrow.fundingDigest(id, funder.address, freelancer.address, allocations, deadline);
       return authority.signMessage(ethers.getBytes(digest));
     }
     async function settlementSig(sid, action, index, amount, bps) {
       const digest = await escrow.settlementDigest(sid, ID, action, index, amount, bps, deadline);
       return authority.signMessage(ethers.getBytes(digest));
     }
+    async function activate(id = ID) {
+      const digest = await escrow.activationDigest(id, deadline);
+      await escrow.activateEscrow(id, deadline, await authority.signMessage(ethers.getBytes(digest)));
+    }
     async function fund() {
       await escrow.connect(client).fundEscrow(ID, provider.address, ALLOCATIONS, deadline, await fundingSig());
+      await activate();
     }
-    return { owner, relayer, authority, client, provider, attacker, usdc, escrow, deadline, fundingSig, settlementSig, fund };
+    return { owner, relayer, authority, client, provider, attacker, usdc, escrow, deadline, fundingSig, settlementSig, activate, fund };
   }
 
   it("binds the client, provider, total, and milestone allocations", async function () {
@@ -52,6 +57,65 @@ describe("DeliveraEscrow v2", function () {
     await expect(
       escrow.connect(client).fundEscrow(ID, provider.address, [1_000_000n], deadline, clientSignature),
     ).to.be.revertedWith("DeliveraEscrow: invalid authority signature");
+  });
+
+  it("independently funds the same local id from two GenLayer deployments", async function () {
+    const { client, provider, usdc, escrow, deadline, fundingSig } = await fixture();
+    const abi = ethers.AbiCoder.defaultAbiCoder();
+    const scopedKey = (adjudicator) => ethers.keccak256(abi.encode(
+      ["string", "uint256", "address", "string"],
+      ["DELIVERA_AGREEMENT_V1", 61999, adjudicator, "delivera-1"],
+    ));
+    const first = scopedKey("0x1111111111111111111111111111111111111111");
+    const second = scopedKey("0x2222222222222222222222222222222222222222");
+    expect(first).not.to.equal(second);
+
+    await escrow.connect(client).fundEscrow(first, provider.address, ALLOCATIONS, deadline, await fundingSig(client, provider, ALLOCATIONS, first));
+    await escrow.connect(client).fundEscrow(second, provider.address, ALLOCATIONS, deadline, await fundingSig(client, provider, ALLOCATIONS, second));
+
+    expect(await escrow.remainingEscrow(first)).to.equal(1_000_000n);
+    expect(await escrow.remainingEscrow(second)).to.equal(1_000_000n);
+    expect(await usdc.balanceOf(await escrow.getAddress())).to.equal(2_000_000n);
+  });
+
+  it("recovers only an untouched deposit that never received adjudication activation", async function () {
+    const { client, provider, attacker, relayer, usdc, escrow, deadline, fundingSig, settlementSig, activate } = await fixture();
+    await escrow.connect(client).fundEscrow(ID, provider.address, ALLOCATIONS, deadline, await fundingSig());
+    const sid = ethers.id("premature-release");
+    await expect(escrow.connect(relayer).releaseMilestone(
+      ID, sid, 0, 400_000n, deadline, await settlementSig(sid, 1, 0, 400_000n, 10_000n),
+    )).to.be.revertedWith("DeliveraEscrow: escrow not activated");
+    await expect(escrow.connect(client).recoverUnconfirmedFunding(ID)).to.be.revertedWith("DeliveraEscrow: recovery delay");
+    await ethers.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+    await expect(escrow.connect(attacker).recoverUnconfirmedFunding(ID)).to.be.revertedWith("DeliveraEscrow: not client");
+    const before = await usdc.balanceOf(client.address);
+    await expect(escrow.connect(client).recoverUnconfirmedFunding(ID)).to.emit(escrow, "UnconfirmedFundingRecovered");
+    expect(await usdc.balanceOf(client.address)).to.equal(before + 1_000_000n);
+    expect(await escrow.remainingEscrow(ID)).to.equal(0n);
+    await expect(activate()).to.be.revertedWith("DeliveraEscrow: cannot activate");
+  });
+
+  it("permanently disables recovery after finalized adjudication activation", async function () {
+    const { client, provider, escrow, deadline, fundingSig, activate } = await fixture();
+    await escrow.connect(client).fundEscrow(ID, provider.address, ALLOCATIONS, deadline, await fundingSig());
+    await activate();
+    await ethers.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+    await expect(escrow.connect(client).recoverUnconfirmedFunding(ID)).to.be.revertedWith("DeliveraEscrow: recovery unavailable");
+  });
+
+  it("allows permissionless activation transport but requires the exact authority signature", async function () {
+    const { client, provider, attacker, authority, escrow, deadline, fundingSig } = await fixture();
+    await escrow.connect(client).fundEscrow(ID, provider.address, ALLOCATIONS, deadline, await fundingSig());
+    const digest = await escrow.activationDigest(ID, deadline);
+    await expect(
+      escrow.connect(attacker).activateEscrow(ID, deadline, await attacker.signMessage(ethers.getBytes(digest))),
+    ).to.be.revertedWith("DeliveraEscrow: invalid authority signature");
+    await expect(
+      escrow.connect(attacker).activateEscrow(ID, deadline, await authority.signMessage(ethers.getBytes(digest))),
+    ).to.emit(escrow, "EscrowActivated");
+    expect(await escrow.isActivated(ID)).to.equal(true);
   });
 
   it("isolates a disputed milestone and leaves unrelated funds untouched", async function () {

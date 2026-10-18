@@ -114,6 +114,11 @@ Boundary (per GenLayer guidance, adapted for the two-chain split):
 
 Every wallet-submitted GenLayer transition must reach `FINALIZED` before it is mirrored. An
 `ACCEPTED` result still inside the appeal window cannot authorize Base movement.
+
+The Base agreement key is domain-separated as
+`keccak256(abi.encode("DELIVERA_AGREEMENT_V1", 61999, intelligentContract, agreementId))`.
+Funding, activation, settlements, replay checks, and receipt verification all use this same key.
+Settlement IDs additionally bind the action and milestone/dispute index to that scoped key.
 7. REJECTED/NEEDS_REVISION → provider may resubmit (bounded retries).
 8. Either party may dispute an unpaid submitted/rejected/exhausted milestone. Approved milestones and
    milestones already settled by arbitration are final: post-payment disputes are rejected so another
@@ -121,8 +126,8 @@ Every wallet-submitted GenLayer transition must reach `FINALIZED` before it is m
    evaluation over both parties' evidence on GenLayer, producing a basis-point split; the relay then
    calls `resolveDispute` on Base Sepolia, which pays both shares in real USDC in one call.
 9. Client can cancel unstarted work; any funded-but-unreleased escrow is refunded via the relay calling
-   `refund` on Base Sepolia. (Timeout-based recovery for a stalled mid-work contract is not built yet —
-   see the README's Known limitations.)
+   `refund` on Base Sepolia. A separate seven-day recovery exists only for a Base deposit that never
+   received finalized adjudication activation. Activated or partially settled agreements cannot use it.
 
 **Unit convention:** ledger amounts (`*Atto` columns) are stored 18-decimal, dollar-equivalent (a $100
 milestone is `100 * 10^18`) — inherited from GenLayer's native-GEN accounting even though no GEN is
@@ -164,7 +169,7 @@ Base Sepolia. The frontend keeps `formatContractAmount` (18-decimal ledger displ
   `delivera-db-gideon`, and Upstash Redis `delivera-redis-gideon`. Object storage is optional.
 - GenLayer contract → GenLayer StudioNet via `genlayer` CLI (gasless). After deploy, set
   `GENLAYER_CONTRACT_ADDRESS` secret and redeploy backend.
-- Current escrow v2 → `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875` on Base Sepolia; current
+- Current escrow → `0x2bA36CD29993cf4250adfb48F367E1893dcd43B5` on Base Sepolia; current
   GenLayer contract → `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa` on StudioNet. Future deployments
   must record both addresses, their receipts, and the exact source commit together.
 

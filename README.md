@@ -74,7 +74,7 @@ caller is the client or the provider, and the detail endpoint returns `403 Forbi
 | Frontend | https://delivera-frontend.vercel.app |
 | Backend API | https://delivera-api-gideon.fly.dev (`/health` for dependency status) |
 | Intelligent contract (adjudication only) | `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa` on GenLayer StudioNet |
-| Escrow contract (holds real value) | `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875` on Base Sepolia |
+| Escrow contract (holds real value) | `0x2bA36CD29993cf4250adfb48F367E1893dcd43B5` on Base Sepolia |
 | USDC (Base Sepolia) | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
 
 Historically, before the payment layer moved to Base Sepolia, the GenLayer contract itself moved real
@@ -240,8 +240,8 @@ Lint: `genvm-lint check contracts/delivera.py` → passes.
 
 The payment layer lives entirely off GenLayer now, on Base Sepolia, in real USDC.
 
-- **`DeliveraEscrow.sol`** (`contracts/base/contracts/DeliveraEscrow.sol`) — the deployed v2 payment
-  contract at `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`; the retired v1 ABI is incompatible. It holds the USDC
+- **`DeliveraEscrow.sol`** (`contracts/base/contracts/DeliveraEscrow.sol`) — the current payment
+  contract at `0x2bA36CD29993cf4250adfb48F367E1893dcd43B5`. Historical escrows remain immutable evidence but are not used for new agreements. It holds the USDC
   (`0x036CbD53842c5426634e7929541eC2318f3dCF7e` on Base Sepolia). Its functions:
   - `fundEscrow(contractId, freelancer, allocations, deadline, signature)` — called **directly by the client's own wallet** from
     the frontend (an ERC20 `approve` followed by this call — see `fundEscrowOnChain` in
@@ -249,9 +249,13 @@ The payment layer lives entirely off GenLayer now, on Base Sepolia, in real USDC
   - release/refund/dispute calls include a deterministic settlement id, exact milestone index and
     amount, expiry, and decision-authority signature. The relayer cannot alter these fields, and
     on-chain allocation/replay mappings reject duplicate or cross-milestone spending.
-  - The `bytes32 contractId` used everywhere is `ethers.id(chainContractId)` — the same hash computed
-    identically in `backend/src/services/baseSepolia.ts` and `frontend/src/lib/escrow.ts`, so the two
-    sides always agree on which escrow a call refers to.
+  - The escrow key is `keccak256(abi.encode("DELIVERA_AGREEMENT_V1", GenLayer chain id,
+    Intelligent Contract address, local agreement id))`. This deployment-aware domain prevents two
+    adjudicator deployments that both create `delivera-1` from sharing funds or settlement state.
+  - A deposit begins unactivated. After the verifier records the Base receipt as `FINALIZED` on
+    GenLayer, the distinct decision authority signs `activateEscrow`. Settlement is impossible before
+    activation. An untouched deposit that never activates can be reclaimed by its client after seven
+    days; activated or partially settled agreements can never use that escape hatch.
 - **The relay** (`backend/src/jobs/relay.ts`) polls Postgres every 30 seconds for GenLayer decisions
   not yet relayed — `APPROVED` milestones, `CANCELLED`/completed-contract refunds, `RESOLVED`
   disputes — and calls the matching `DeliveraEscrow.sol` function via
@@ -276,6 +280,8 @@ The payment layer lives entirely off GenLayer now, on Base Sepolia, in real USDC
   (contract id, client, freelancer, exact amount) via `verifyEscrowFunded`. Funding requires a
   short-lived signature binding those parties and every milestone allocation. Only the GenLayer
   owner/verifier may record the verified Base receipt as `FUNDED`; clients cannot call it directly.
+  The backend then activates the exact deployment-scoped Base key. A retry is idempotent if GenLayer
+  finalized before activation or the API response was interrupted.
 - **Network switching:** before any on-chain escrow write, `ensureBaseSepolia()`
   (`frontend/src/lib/escrow.ts`) forces the connected wallet onto Base Sepolia (chain id `84532`),
   since a wallet the user has manually pointed elsewhere will otherwise still try to sign there.
@@ -472,11 +478,11 @@ it out:
 
 ## Known limitations
 
-- **No timeout/recovery exit yet.** If a party goes silent mid-milestone (submitted but never
-  verified, or disputed but never resolved), there's currently no forced exit that lets the other
-  party reclaim escrow after a waiting period — `cancel_contract` only covers the pre-work states.
-  GenVM has no deterministic wall-clock time source inside consensus execution, so this needs a
-  proxy (e.g. an action-sequence-based window) rather than real time, and hasn't been built yet.
+- **Recovery is intentionally limited to never-activated deposits.** If Base funding succeeds but
+  GenLayer confirmation never finalizes, the client can call `recoverUnconfirmedFunding` after seven
+  days. Once adjudication is activated, timeout recovery is permanently disabled so it cannot bypass
+  a legitimate decision or revoke a provider entitlement. Stalled active work still requires the
+  normal GenLayer cancellation/dispute process; there is no unilateral mid-work timeout.
 - **A GenLayer decision and its Base Sepolia payout are not atomic.** Between a milestone being marked
   `APPROVED` in Postgres and the relay's next 30-second poll actually calling `releaseMilestone`, the
   decision exists without its payout — no funds are at risk (they're still sitting in

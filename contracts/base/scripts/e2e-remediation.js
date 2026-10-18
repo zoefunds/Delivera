@@ -1,4 +1,7 @@
-// Reproducible Base Sepolia leg of the funded Delivera remediation demo.
+// ARCHIVED: reproducible Base Sepolia leg of the historical funded remediation
+// demo. It intentionally targets the prior escrow and raw legacy key so the
+// published receipts remain reproducible. Do not use it for new agreements;
+// use backend/scripts/current-production-e2e.ts.
 // Private keys are read/derived locally and are never printed or persisted.
 const hre = require("hardhat");
 

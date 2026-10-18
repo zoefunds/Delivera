@@ -15,7 +15,9 @@ in [`TWO_PASS_PRODUCTION_E2E.md`](TWO_PASS_PRODUCTION_E2E.md).
 - Current GenLayer deployment transaction: `0x1690d4f69ee49e842b6f4eeab5fc04a5a8cebfce48401f3cc29354f5615a8190`
 - Historical funded-run GenLayer contract: `0xB19331f411618Abb253a01Fa5b457D910c92D8F6`
 - Historical deployment transaction: `0x79b954dd00da88b3f42028ed23e5f96bdf58d1c6ffeeb188a46df411f054dfc7`
-- Base Sepolia escrow v2: `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`
+- Current Base Sepolia escrow: `0x2bA36CD29993cf4250adfb48F367E1893dcd43B5`
+- Current Base deployment transaction: `0x8af24446291a0efc4fe9641cafdde37cd54e65660e53c0ee4a053c13d9f8b212` (block 48,259,013)
+- Historical funded-run escrow: `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 - Client and decision authority: `0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb`
 - Current relayer: `0x0EaD3C2e53Bf4c47B8875DcC1669E69Deee19d2D`
@@ -24,9 +26,10 @@ in [`TWO_PASS_PRODUCTION_E2E.md`](TWO_PASS_PRODUCTION_E2E.md).
 The current deployment reached `FINALIZED` (`status: 7`) with `MAJORITY_AGREE`;
 three validators agreed and two became idle after quorum. Its authoritative
 `get_platform_stats` read returned owner `0x7401…58Eb`, threshold 70, maximum
-attempts 3, and zero initial agreements. The Base escrow bytecode is unchanged.
-The prior address remains below only because it is the source of the already
-completed funded cross-chain evidence run.
+attempts 3, and zero initial agreements. Current escrow bytecode adds
+deployment-aware agreement keys, post-finality activation, and a seven-day
+recovery path limited to untouched deposits that never activated. The prior
+addresses remain below only as historical funded-run evidence.
 
 ## Reproducible checks
 
@@ -38,17 +41,54 @@ cd .. && python3 -m py_compile contracts/delivera.py
 python3 -m unittest contracts/test_dispute_guards.py
 genvm-lint check contracts/delivera.py
 git diff --check
+# Requires the explicitly authorized throwaway client key:
+cd backend && E2E_CLIENT_PRIVATE_KEY=... npm run e2e:current
 ```
 
 Observed results:
 
-- Solidity: 6 passing tests.
-- Backend: 3 tests passed (false funding claims and interrupted-relay recovery); TypeScript passed.
+- Solidity: 10 passing tests, including same-local-ID cross-deployment funding, permissionless transport with mandatory authority authentication, and both sides of the unconfirmed-deposit recovery gate.
+- Backend: 4 tests passed (deployment namespaces, false funding claims, and interrupted-relay recovery); TypeScript passed.
 - Frontend production build: passed; all 11 routes generated.
 - Python syntax compilation and the settled-milestone dispute-guard regression: passed.
 - GenVM static lint: 3 checks passed. Full SDK validation could not run because
-  the linter's pinned SDK archive was unavailable (`filename ...tar not found`).
+  the installed linter could not access its cached pinned SDK archive
+  (`Operation not permitted` under `~/.cache/genvm-linter/extracted/...`).
 - Patch whitespace validation: passed.
+
+## Cross-deployment identifier regression
+
+The Base key is:
+
+```text
+keccak256(abi.encode(
+  "DELIVERA_AGREEMENT_V1",
+  61999,
+  genLayerIntelligentContract,
+  localAgreementId
+))
+```
+
+For the same local ID `delivera-1`, the historical deployment derives
+`0xeeae4c9399087a9e4ac6716c04bb42c2dc7d749f8ca22b08ca086f659e6d0a0e`,
+while the current deployment derives
+`0x3b8cab0227cbc1fb819bf6cc95eb2c601717ce76bf1f72baa5096f1c6014eb27`.
+The Solidity regression funds both keys independently in one escrow, then
+asserts separate 1,000,000-unit balances. Backend tests independently assert
+that changing either the chain ID or Intelligent Contract address changes the
+key. Funding signatures, events, receipt verification, settlement signatures,
+replay identifiers, relay reconciliation, and browser funding all use the
+scoped key.
+
+## Unconfirmed funding recovery
+
+New deposits cannot settle until `activateEscrow` receives an expiring
+decision-authority signature after GenLayer funding reaches `FINALIZED`.
+Before activation, settlement calls revert. If confirmation never completes,
+only the funding client may recover the entirely untouched deposit after
+604,800 seconds. Activation permanently disables recovery, as does any state
+with a consumed entitlement. The browser surfaces this recovery only for an
+on-chain deposit that is unactivated and past its recovery timestamp.
 
 ### Hosted CI status
 
@@ -114,11 +154,41 @@ Fly Postgres app `delivera-db-gideon` and Upstash Redis database
 public `/health` read returned `healthy` with server/database/Redis `ok` and
 both chain integrations `configured`. A real wallet nonce, signature verify,
 and authenticated identity read each returned HTTP 200 against the fresh
-database. Vercel production deployment `dpl_DeaASceUsx7XiWRF6pJ6Y4PDeBci`
+database. Current Vercel production deployment `dpl_G3uwJ844wgzGoEuovn2BFQf15gGt`
 is `READY` and embeds the new API URL. Fly is intentionally scaled to one
 always-on API machine so there is a single in-process relay scheduler.
 
 ## Funded StudioNet to Base Sepolia demonstration
+
+### Current deployment funded lifecycle — `delivera-4`
+
+This run used the current public pair: GenLayer
+`0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa` and Base escrow
+`0x2bA36CD29993cf4250adfb48F367E1893dcd43B5`. Client
+`0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb` and provider
+`0x5C00df44891d87e1223F040C158568360cc35A52` signed their own lifecycle
+transactions. Its deployment-scoped Base key was
+`0xe916b54ef77d1b1a19b964ace4b09f091d0345c53dbf84480e4fc5cebb33a308`.
+
+- Base funding: `0x8f3a73cedd08f18052af7f5f2be9706d01f0fa3bd7849a7286ad68633d3d298f`, block 48,259,616; exact allocations `[110000, 120000, 130000]`.
+- Post-finality activation: `0xb9cb06c3c69f1331d05703babc6803b5b4265ab88cae78c175af254e3117fc8f`, block 48,259,635.
+- Provider acceptance: `0x5e7f61aaf61bbd5141283a974d13d5ab3d9e43a5dba0fe449655cf89687a7a04`.
+- Milestone 0 submission: `0x560067f6194ba8985c6667c373a0edce736ef389933fa2d01a98f6e19d52d55c`; client approval: `0x7661d8c6f9fe3d03ecfa59e97030679721e370503e798a762139f2a9edbfd055`; Base 110,000-unit release: `0x399f87ba4f3ef03be02c65e567c35b05c04116fa59f4c9bc287a2a3bfb6c51c0`, block 48,259,700.
+- Milestone 1 submission: `0xbc05bfa17c6d9067b8f0d51dcf027a665439271641594f67e6d57a5005421546`; validator evaluation: `0xe41d79d4cdf6b256aa9ee128bddbd35ad9961e085ca7fe3792d94d0ecb9bed19`. Independent retrieval returned `reachable_count = 0`, verdict `rejected`, score 0.
+- Dispute creation: `0x16ef75f5d175429b709d6ded0bc02fd310050d43ec8e6453a440e75b3cf6f9e2`; provider statement: `0x3225d6b42bda08fd485031f07e91b7f862e0eac6ddff95790be319c4c2f1e2a5`; consensus resolution: `0x820d3c7ba380051a6befd239cfe2764675c497c6806fe81477e7e832fba43774` at exact provider/client split 0/10,000 bps.
+- Base milestone-1 arbitration: `0x815f90ea76af965ec9130c94f38b0712f8f7bd2d649206834db06ad5650777f3`, block 48,259,820; exactly 120,000 units returned to the client without consuming milestone 2.
+- Milestone 2 submission: `0x691e54a10124cc4a73dd60a7c33c10c3baef31a892a31bb53a1b2e46a6a0f433`; validator evaluation: `0xc996719cebc144657920ea634e1cb640e9fdcd06fc114f88d576469094d4f610`. Validators retrieved the real page (`reachable_count = 1`) and conservatively rejected it at score 25 because the fetched representation did not contain the exact required phrase. The client then explicitly approved it in `0xecb46be804a15b487c3ca44f06b032efbbb27920de05f202bad005bd03f63c62`.
+- Final Base release and settlement: `0xae47076ea4118ab7cd43da8acf03ec5f667b75a6d70ae04eea14261864d5008e`, block 48,259,895.
+
+Final GenLayer state is `COMPLETED`: funded 0.36, released 0.24, refunded
+0.12 ledger units. Final Base state is activated and `SETTLED`: funded 360,000,
+released 240,000, refunded 120,000, per-milestone consumption
+`[110000, 120000, 130000]`, remaining 0. Wallet balances changed from client
+121,740,000 / provider 0 / escrow 0 to client 121,500,000 / provider 240,000 /
+escrow 0 USDC base units. This is the required funded lifecycle on the current
+public contract pair, not the historical adjudicator.
+
+### Historical funded lifecycle
 
 This funded agreement was `delivera-2` on the historical GenLayer deployment
 `0xB19331f411618Abb253a01Fa5b457D910c92D8F6`; identifiers are scoped to a

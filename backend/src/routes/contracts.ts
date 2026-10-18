@@ -17,7 +17,7 @@ import { email } from "../lib/email.js";
 import { cached, invalidate } from "../lib/redis.js";
 import { contractConfigured, readContract, readUntilFound, waitForFinalizedTransaction, writeContract } from "../lib/genlayer.js";
 import { config } from "../config.js";
-import { createFundingAuthorization, isEscrowConfigured, verifyEscrowFunded } from "../services/baseSepolia.js";
+import { activateEscrow, createFundingAuthorization, getFundingRecoveryState, isEscrowConfigured, verifyEscrowFunded } from "../services/baseSepolia.js";
 
 const writeLimit = rateLimit({ max: 20, windowSec: 60, keyPrefix: "chain-write" });
 const confirmTxSchema = z.object({ txHash: z.string().min(1) });
@@ -295,6 +295,9 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
       ).catch(() => null);
     }
     const disputes = await prisma.dispute.findMany({ where: { contractId: id } });
+    const fundingRecovery = contract.chainContractId && isEscrowConfigured()
+      ? await getFundingRecoveryState(contract.chainContractId).catch(() => null)
+      : null;
     return {
       ...contract,
       disputes,
@@ -302,6 +305,7 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
       escrow: {
         address: config.DELIVERA_ESCROW_ADDRESS || null,
         usdcAddress: config.BASE_SEPOLIA_USDC_ADDRESS,
+        fundingRecovery,
       },
     };
   });
@@ -443,6 +447,10 @@ export async function contractRoutes(app: FastifyInstance): Promise<void> {
     } else if (fundingState.status !== "FUNDED") {
       return reply.code(409).send({ error: { code: "BAD_CHAIN_STATUS", message: `Cannot confirm funding from ${fundingState.status}` } });
     }
+    // Base settlement remains disabled until this post-finalization
+    // activation lands. If GenLayer confirmation never finalizes, the client
+    // can recover the untouched deposit after the on-chain delay instead.
+    await activateEscrow(contract.chainContractId!);
     return confirmAction<ChainContract>(req, reply, id, {
       allow: "client", method: "get_contract", kind: "fund_escrow",
       args: (cid) => [cid],
