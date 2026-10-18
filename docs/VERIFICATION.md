@@ -2,6 +2,10 @@
 
 Date: 2026-10-18 (Africa/Lagos)
 
+Two additional sequential production application passes, each covering every
+current UI/API section with a distinct real StudioNet agreement, are recorded
+in [`TWO_PASS_PRODUCTION_E2E.md`](TWO_PASS_PRODUCTION_E2E.md).
+
 ## Deployed evidence source and addresses
 
 - Funded live-run source commit: `d9d94c0b5b16edcc4982875f89dd53542b658e92`
