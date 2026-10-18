@@ -93,8 +93,8 @@ on-chain deposit that is unactivated and past its recovery timestamp.
 ### Hosted CI status
 
 The latest GitHub Actions run before this documentation sync,
-[`39083558293`](https://github.com/zoefunds/Delivera/actions/runs/39083558293),
-was triggered for commit `187b5864970c4061a8722fdb0cae92be3df4b21a`,
+[`39087992623`](https://github.com/zoefunds/Delivera/actions/runs/39087992623),
+was triggered for commit `31f58faf304e282a0f964608d538d060debd5e80`,
 but GitHub did not start the job: `The job was not started because your
 account is locked due to a billing issue.` This is an account-level runner
 block, not a test failure; GitHub produced no job log. The commands and
