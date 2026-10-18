@@ -34,6 +34,40 @@ const empty: MilestoneDraft = {
   amountUsd: "",
 };
 
+const TEST_PROVIDER = "0x1A321F1615D5Ff2F236620647aF1E30a4fAcCB7d";
+
+function detailedTestMilestones(): MilestoneDraft[] {
+  return [
+    {
+      title: "Accessible shipment operations dashboard",
+      description:
+        "Build a responsive operations dashboard for anonymized medical cold-chain shipments moving between an Ikeja warehouse, Lagos airport cargo handling, and hospital receiving points.",
+      acceptanceCriteria:
+        "The submitted public HTTPS page loads without authentication at 1440px and 390px widths; keyboard navigation reaches every filter; labelled Normal, Warning, and Critical states are present; at least 12 realistic anonymized shipments show shipment ID, custodian, temperature, last sensor timestamp, SLA risk, and ETA; timestamps use Africa/Lagos; no patient-identifying data is displayed.",
+      evidenceType: "website",
+      amountUsd: "0.11",
+    },
+    {
+      title: "Documented shipment-status API",
+      description:
+        "Publish the read-only integration endpoint used by the dashboard, including deterministic examples for delayed telemetry and temperature excursions.",
+      acceptanceCriteria:
+        "The submitted public HTTPS endpoint returns valid JSON containing shipmentId, custodyStage, temperatureC, sampledAt, slaRisk, and eta; public documentation includes one success example and two failure examples; a malformed shipment ID returns the documented 4xx response; example records contain no patient-identifying data.",
+      evidenceType: "api_endpoint",
+      amountUsd: "0.12",
+    },
+    {
+      title: "Cold-chain incident response runbook",
+      description:
+        "Publish an operator runbook covering alert triage, sensor validation, carrier escalation, hospital notification, evidence preservation, and post-incident review.",
+      acceptanceCriteria:
+        "The submitted public document defines severity levels and named response roles; specifies a 15-minute escalation target for critical alerts; provides ordered validation and containment steps; includes carrier and hospital communication templates; lists audit evidence to retain; and ends with a post-incident retrospective checklist.",
+      evidenceType: "document",
+      amountUsd: "0.13",
+    },
+  ];
+}
+
 function dollarsToAtto(dollars: string): string {
   const [whole = "0", frac = ""] = dollars.trim().split(".");
   return (BigInt(whole || "0") * 10n ** 18n + BigInt((frac + "0".repeat(18)).slice(0, 18))).toString();
@@ -44,6 +78,9 @@ export default function NewContractPage() {
   const { address } = useAppKitAccount();
   const { walletProvider } = useAppKitProvider<any>("eip155");
   const [milestones, setMilestones] = useState<MilestoneDraft[]>([{ ...empty }]);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [provider, setProvider] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState("Creating on-chain…");
@@ -56,6 +93,17 @@ export default function NewContractPage() {
     () => milestones.reduce((sum, m) => sum + (Number(m.amountUsd) || 0), 0),
     [milestones],
   );
+
+  function autofillTestContract() {
+    const runId = new Date().toISOString().replace(/[:.]/g, "-");
+    setTitle(`Lagos Cold-Chain Operations Verification — ${runId}`);
+    setDescription(
+      "A production-style test agreement for a verifiable medical cold-chain monitoring package covering an accessible shipment dashboard, its documented read-only API, and an operator incident-response runbook. The criteria are intentionally objective so validators can assess submitted public evidence consistently.",
+    );
+    setProvider(TEST_PROVIDER);
+    setMilestones(detailedTestMilestones());
+    setError("");
+  }
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -134,6 +182,20 @@ export default function NewContractPage() {
           Define concrete, verifiable milestones — GenLayer validators judge deliverables against exactly
           what you write here, not vibes.
         </p>
+        <div className="mt-6 flex flex-col items-start gap-2">
+          <button
+            type="button"
+            className="flex items-center gap-2 rounded-lg border border-primary px-4 py-2 font-semibold text-primary transition-all hover:bg-primary/5"
+            onClick={autofillTestContract}
+          >
+            <Icon name="auto_fix_high" />
+            Autofill detailed test contract
+          </button>
+          <p className="max-w-2xl text-xs text-on-surface-variant">
+            Uses a registered test provider and three objective, validator-friendly milestones totaling
+            0.36 USDC. Creation is real and wallet-signed; funding remains a separate wallet action.
+          </p>
+        </div>
       </div>
 
       <form onSubmit={submit} className="space-y-8">
@@ -154,6 +216,8 @@ export default function NewContractPage() {
                 name="title"
                 required
                 maxLength={200}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
                 placeholder="Marketing site redesign"
               />
             </div>
@@ -161,7 +225,15 @@ export default function NewContractPage() {
               <label className="label" htmlFor="description">
                 Description
               </label>
-              <textarea className="input" id="description" name="description" rows={3} maxLength={8000} />
+              <textarea
+                className="input"
+                id="description"
+                name="description"
+                rows={3}
+                maxLength={8000}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
             </div>
             <div>
               <label className="label" htmlFor="provider">
@@ -172,6 +244,8 @@ export default function NewContractPage() {
                 id="provider"
                 name="provider"
                 required
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
                 placeholder="0x… or freelancer@example.com"
               />
               <p className="mt-1 text-xs text-on-surface-variant">

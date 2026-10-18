@@ -305,6 +305,11 @@ stats), the milestone-builder contract wizard, the contract detail page (lifecyc
 submission history, AI verdicts, disputes, on-chain funding), wallet (connected address and live
 Base Sepolia USDC balance), and notifications.
 
+For quick production testing, the New Contract page includes **Autofill detailed test contract**.
+It inserts a registered test-provider address, a unique run title, and three substantive cold-chain
+milestones with objective website/API/document acceptance criteria. The resulting creation is a real
+wallet-signed StudioNet transaction; Base Sepolia funding is still an explicit separate wallet action.
+
 ## REST API surface
 
 Base path `/api/v1`, JSON only, `Authorization: Bearer <access JWT>` + an httpOnly refresh cookie.
