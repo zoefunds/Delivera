@@ -5,7 +5,7 @@ Date: 2026-10-18 (Africa/Lagos)
 ## Deployed evidence source and addresses
 
 - Funded live-run source commit: `d9d94c0b5b16edcc4982875f89dd53542b658e92`
-- Latest remediated source commit: `6cffd60` (adds the post-arbitration re-dispute guard and automated recovery/funding-claim regressions)
+- Latest remediated source before the backend migration: `aadff224afe33477df0facdfe164504d393994d2`
 - Current GenLayer StudioNet contract: `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`
 - Current GenLayer deployment transaction: `0x1690d4f69ee49e842b6f4eeab5fc04a5a8cebfce48401f3cc29354f5615a8190`
 - Historical funded-run GenLayer contract: `0xB19331f411618Abb253a01Fa5b457D910c92D8F6`
@@ -13,7 +13,8 @@ Date: 2026-10-18 (Africa/Lagos)
 - Base Sepolia escrow v2: `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 - Client and decision authority: `0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb`
-- Configured relayer (restored after the run): `0xd07E3D1bAF59F1c09e2F8842786D89B716915f3E`
+- Current relayer: `0x0EaD3C2e53Bf4c47B8875DcC1669E69Deee19d2D`
+- Relayer rotation transaction: `0xe859c848aa50d86d779004c956e3bde20bd92315027576ff78567770834ceddd` (Base Sepolia block 48,257,187)
 
 The current deployment reached `FINALIZED` (`status: 7`) with `MAJORITY_AGREE`;
 three validators agreed and two became idle after quorum. Its authoritative
@@ -92,20 +93,23 @@ mutation or placeholder agreement content.
 
 The frontend production environment was repaired during this run:
 `NEXT_PUBLIC_API_URL` had been empty and is now
-`https://delivera-api-v2.fly.dev`; `NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS` is the
-current address above. Final Vercel deployment `dpl_AezKKqRRsnUQWkkPzKmmj3CvbVwK`
-completed `READY` and was aliased to the public domain.
+`https://delivera-api-gideon.fly.dev`; `NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS` is the
+current address above. The replacement Vercel deployment
+`dpl_7iiKPMP5U7Mj3bVb1t5PCuKYTZSS` completed `READY` and was aliased to the
+public domain.
 
-### Production backend configuration blocker
+### Canonical production backend replacement
 
-The Fly apps `delivera-api` and `delivera-api-v2` are owned by a different Fly
-account from the currently authenticated CLI account (`gideon820001@gmail.com`).
-Consequently their secrets could not be switched during this run. The backend
-must set `GENLAYER_CONTRACT_ADDRESS=0xDa4B…5cBa` and
-`DELIVERA_ESCROW_ADDRESS=0xC7A0…7875`, then redeploy, before the new agreement can
-be mirrored or funded through the application. Until that account-level change,
-the public frontend is correctly configured but contract confirmation/detail
-reads remain split across new frontend and old backend deployments.
+The inaccessible `delivera-api` and `delivera-api-v2` deployments are retired.
+The canonical API is `https://delivera-api-gideon.fly.dev`, backed by the new
+Fly Postgres app `delivera-db-gideon` and Upstash Redis database
+`delivera-redis-gideon` in the authenticated `personal` organization. Its
+public `/health` read returned `healthy` with server/database/Redis `ok` and
+both chain integrations `configured`. A real wallet nonce, signature verify,
+and authenticated identity read each returned HTTP 200 against the fresh
+database. Vercel production deployment `dpl_7iiKPMP5U7Mj3bVb1t5PCuKYTZSS`
+is `READY` and embeds the new API URL. Fly is intentionally scaled to one
+always-on API machine so there is a single in-process relay scheduler.
 
 ## Funded StudioNet to Base Sepolia demonstration
 

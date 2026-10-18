@@ -72,7 +72,7 @@ caller is the client or the provider, and the detail endpoint returns `403 Forbi
 | Component | URL / Address |
 |---|---|
 | Frontend | https://delivera-frontend.vercel.app |
-| Backend API | Fly.io app `delivera-api-v2` (`/health` for status) — the original `delivera-api` name is stuck on an inaccessible account, so this is the real one despite the mismatched app name in older links |
+| Backend API | https://delivera-api-gideon.fly.dev (`/health` for dependency status) |
 | Intelligent contract (adjudication only) | `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa` on GenLayer StudioNet |
 | Escrow contract (holds real value) | `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875` on Base Sepolia |
 | USDC (Base Sepolia) | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
@@ -393,21 +393,20 @@ Full guide in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Summary:
    funding needed): `genlayer deploy --contract contracts/delivera.py`.
 2. Deploy `contracts/base/contracts/DeliveraEscrow.sol` to Base Sepolia (it needs a funded relayer
    address and the USDC token address at deploy time).
-3. `fly deploy` the backend — app `delivera-api-v2` on Fly.io (the original `delivera-api` name is
-   stuck on an inaccessible account, so don't be confused if you see references to it) — with all
+3. `fly deploy` the backend — app `delivera-api-gideon` on Fly.io — with all
    secrets set, including `GENLAYER_CONTRACT_ADDRESS` (step 1), the Base Sepolia escrow address, RPC
    URL, and relayer private key (step 2), `DATABASE_URL` (Fly Postgres), `REDIS_URL` (Upstash),
-   `BREVO_API_KEY`, the GenLayer owner/verifier key, separate Base relayer and authority keys, and
-   Tigris S3 credentials.
+   `BREVO_API_KEY`, the GenLayer owner/verifier key, and separate Base relayer and authority keys.
+   S3-compatible object-storage credentials are optional.
 4. `vercel --prod` the frontend (Vercel project `delivera-frontend`) with `NEXT_PUBLIC_API_URL`
    pointing at the Fly backend and `NEXT_PUBLIC_REOWN_PROJECT_ID` set for wallet connect, then update
    `APP_URL`/`CORS_ORIGINS` on the backend once the final Vercel domain is known and redeploy.
 5. Whenever either contract is redeployed, update the matching address secret and `fly deploy` again —
    the backend picks it up on the rolling restart.
 
-`fly.toml` sets `min_machines_running = 1` with `auto_start_machines = true`, so one backend machine is
-always up and Fly auto-starts the second on demand if it's idled down — the API doesn't go down between
-requests. The relay job (`backend/src/jobs/relay.ts`) runs inside that same backend process on a
+`fly.toml` sets `min_machines_running = 1` with `auto_start_machines = true`; production is intentionally
+scaled to one always-on backend machine because the relay scheduler runs in-process. The relay job
+(`backend/src/jobs/relay.ts`) runs inside that backend process on a
 30-second poll, so it needs no separate deployment.
 
 ## Security highlights

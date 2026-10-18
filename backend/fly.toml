@@ -1,9 +1,9 @@
-# fly.toml app configuration file generated for delivera-api on 2026-07-10T20:33:48+01:00
+# Canonical Fly.io backend created on 2026-10-18.
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'delivera-api-v2'
+app = 'delivera-api-gideon'
 primary_region = 'iad'
 
 [build]

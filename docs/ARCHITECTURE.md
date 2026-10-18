@@ -145,8 +145,7 @@ Base Sepolia. The frontend keeps `formatContractAmount` (18-decimal ledger displ
 
 - Wallet-signature (SIWE-style) login — no passwords to hash or leak; JWT access (15m) + rotating
   refresh tokens (httpOnly).
-- Custodial GenLayer wallet export is gated on signing a fresh message with the login wallet, not a
-  password, and is audit-logged.
+- Users sign GenLayer actions with their own wallets; the backend stores no user private keys.
 - On-chain `EscrowFunded` event verification before any funding claim is trusted.
 - Relayer and authority keys are separate. The relayer alone cannot bypass signed parameters,
   milestone allocations, or replay protection. The authority remains a disclosed testnet trust
@@ -162,9 +161,8 @@ Base Sepolia. The frontend keeps `formatContractAmount` (18-decimal ledger displ
 
 - Frontend → Vercel project `delivera-frontend` (`vercel --prod`), env: `NEXT_PUBLIC_API_URL`,
   `NEXT_PUBLIC_REOWN_PROJECT_ID`.
-- Backend → Fly.io app `delivera-api-v2` (`fly deploy`, no Docker builds locally — Fly builds remotely
-  from Dockerfile; the original `delivera-api` name is stuck on an inaccessible account), Fly Postgres
-  attach, Upstash Redis, Tigris via `fly storage create`.
+- Backend → Fly.io app `delivera-api-gideon` (`fly deploy`, remote Docker build), Fly Postgres app
+  `delivera-db-gideon`, and Upstash Redis `delivera-redis-gideon`. Object storage is optional.
 - GenLayer contract → GenLayer StudioNet via `genlayer` CLI (gasless). After deploy, set
   `GENLAYER_CONTRACT_ADDRESS` secret and redeploy backend.
 - Current escrow v2 → `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875` on Base Sepolia; current
