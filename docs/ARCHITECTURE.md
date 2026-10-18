@@ -168,7 +168,7 @@ Base Sepolia. The frontend keeps `formatContractAmount` (18-decimal ledger displ
 - GenLayer contract → GenLayer StudioNet via `genlayer` CLI (gasless). After deploy, set
   `GENLAYER_CONTRACT_ADDRESS` secret and redeploy backend.
 - Current escrow v2 → `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875` on Base Sepolia; current
-  GenLayer contract → `0xB19331f411618Abb253a01Fa5b457D910c92D8F6` on StudioNet. Future deployments
+  GenLayer contract → `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa` on StudioNet. Future deployments
   must record both addresses, their receipts, and the exact source commit together.
 
 ## Scaling & Ops

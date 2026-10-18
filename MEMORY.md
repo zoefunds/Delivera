@@ -1,52 +1,43 @@
 # Delivera — Project Memory
 
-Living log of key decisions, gotchas and state. Update as the project evolves.
+Current operational notes; authoritative evidence is in `docs/VERIFICATION.md`.
 
-## Stack decisions (2026-07-10)
-- Backend: Node 22 + Fastify + Prisma + PostgreSQL on Fly.io; Upstash Redis for cache/rate limits.
-- Auth: email + password (Argon2id) with auto-generated **custodial GenLayer wallet** per user —
-  private key AES-256-GCM encrypted (scrypt from `WALLET_MASTER_KEY` + per-user salt), stored in
-  Postgres, exportable once per reveal with password re-auth + audit log.
-- Email: Brevo (verification, password reset, contract notifications). Sender: preciousmofeoluwa@gmail.com.
-- Storage: Fly Tigris (S3-compatible) for attachments.
-- Frontend: Next.js 15 App Router + Tailwind, dark mode, deployed to Vercel.
-- Contract: single 1,200+ line `DeliveraEscrow` in `contracts/delivera.py`, StudioNet (gasless).
+## Architecture
 
-## GenLayer gotchas learned the hard way
-- **Pin the runner hash** — `py-genlayer:test`/`latest` are rejected by all networks. Current pin:
-  `py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6` (a newer runner exists:
-  `1zr6nqk597d97kg0dyxg0shhrykx5v02zjgnyrajapy4wlqvfvwh`).
-- **`gl.message.sender_address`**, NOT `sender_account` — the latter crashed the constructor on
-  StudioNet (AttributeError) even though some docs show it. Fixed 2026-07-10.
-- Storage fields are class-level annotations; `dict`/`list` are not storable — use
-  `TreeMap`/`DynArray`, JSON-string blobs for nested records; money is atto-scale `u256`.
-- Linter requires all contract methods to take `self` (no `@staticmethod`).
-- Validators must verify substance (re-fetch evidence + re-run LLM + compare decision fields with
-  tolerance), never just check the leader's output format — reviewer requirement and consensus
-  requirement. Tolerances: score ±20, borderline band ±12 around threshold 70, evidence
-  reachability must match exactly. Splits: ±1500 bps + same side of 50/50.
-- StudioNet: gasless (0 GEN fine), rate-limited 60 req/min per IP, max 32 pending txs per sender.
-- genlayer-js: must be **v1.x** (`^1.1.8`) for `studionet` chain export; v0.7 only had
-  localnet/simulator.
-- No wall-clock time in deterministic code — contract uses a monotonic `action_seq` counter;
-  cancellation/dispute rules are state-based, not deadline-based.
+- Wallet-native SIWE-style authentication; no email/password or user-key custody.
+- User wallets sign ordinary GenLayer StudioNet lifecycle actions and fund Base Sepolia escrow directly in USDC.
+- GenLayer performs milestone state transitions, independent evidence retrieval, AI verification, consensus comparison, and dispute arbitration; it holds no real funds.
+- `DeliveraEscrow.sol` v2 holds USDC. Funding binds agreement id, client, provider, amount, and allocation vector. Settlement requires distinct relayer and decision-authority roles plus exact expiring signatures, allocation checks, deterministic settlement ids, and per-milestone replay protection.
+- PostgreSQL is a query/recovery mirror, never the authoritative payment idempotency boundary.
 
-## Review-team constraints (grant submission)
-- One serious project; no thin demos. No "AI app with GenLayer attached" — consensus must gate a
-  real settlement (here: escrow release). Validators must check real outcomes via contract-side web
-  fetch, not output format or user-submitted claims. Full repo must be submitted. Avoid
-  UNDETERMINED consensus (hence tolerance-band validator design).
+## Current deployments — 2026-10-18
 
-## Deployment state
-- GitHub: https://github.com/zoefunds/Delivera (no Claude attribution in commits — user requirement).
-- Contract: first deploy attempt errored (sender_account bug), fixed; awaiting user's redeploy +
-  contract address → set `GENLAYER_CONTRACT_ADDRESS` on Fly and redeploy backend.
-- Fly app: `delivera-api` (fly.toml) · Frontend: Vercel project in `frontend/`.
-- Secrets (Brevo key, Upstash Redis URL, JWT/WALLET keys) go in Fly secrets only — never in git.
-  Brevo key was shared in plaintext during setup; rotate it after launch.
+- Frontend: `https://delivera-frontend.vercel.app`
+- Production API documented by the frontend: `https://delivera-api-v2.fly.dev`
+- GenLayer StudioNet: `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`
+- GenLayer deployment tx: `0x1690d4f69ee49e842b6f4eeab5fc04a5a8cebfce48401f3cc29354f5615a8190`
+- Base Sepolia escrow v2: `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`
+- Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+- Remediated source baseline: `6cffd60`
 
-## Open items
-- [x] Contract redeployed to StudioNet after the `sender_address` fix:
-      `GENLAYER_CONTRACT_ADDRESS=0xa6f7F1d08D319AC62aD45222B5B324cAC9cDf1dA`
-- [ ] Rotate Brevo API key after launch.
-- [ ] Consider upgrading pinned runner hash after testing on the newer GenVM.
+The prior StudioNet address `0xB193…D8F6` remains relevant only for the funded historical cross-chain evidence run documented in `docs/VERIFICATION.md`.
+
+## Current operational blockers
+
+- GitHub Actions is blocked before job startup by an account billing lock. Local CI-equivalent commands pass; the failed run link is in the verification file.
+- The live Fly apps are owned by a different Fly account from the locally authenticated CLI account. Their GenLayer and escrow secrets remain stale; update them to the addresses above and redeploy before using the new agreement through the public application.
+
+## Consensus and lifecycle rules
+
+- Approval/non-approval must match exactly between leader and validator.
+- Arbitration is quantized to 500-bps buckets and validators must agree on the exact payable bucket.
+- Post-payment disputes are unsupported. `raise_dispute` rejects `APPROVED` and every milestone whose `settled_atto` is non-zero, preventing repeat arbitration from freezing or spending another milestone.
+- Every wallet-submitted GenLayer transition must be `FINALIZED` before its database mirror or Base settlement becomes eligible.
+
+## Tooling notes
+
+- Runner pin: `py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6`.
+- Use `gl.message.sender_address`; `sender_account` fails on StudioNet.
+- Nested contract records are JSON strings in `DynArray[str]`; storage indexes use `TreeMap`.
+- StudioNet is gasless but rate-limited. `genlayer-js` v1.x is required.
+- Temporary deployment account `delivera-throwaway` was removed after deployment; `anchor-deploy` is restored as the active CLI alias.

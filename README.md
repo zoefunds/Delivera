@@ -73,7 +73,7 @@ caller is the client or the provider, and the detail endpoint returns `403 Forbi
 |---|---|
 | Frontend | https://delivera-frontend.vercel.app |
 | Backend API | Fly.io app `delivera-api-v2` (`/health` for status) — the original `delivera-api` name is stuck on an inaccessible account, so this is the real one despite the mismatched app name in older links |
-| Intelligent contract (adjudication only) | `0xB19331f411618Abb253a01Fa5b457D910c92D8F6` on GenLayer StudioNet |
+| Intelligent contract (adjudication only) | `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa` on GenLayer StudioNet |
 | Escrow contract (holds real value) | `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875` on Base Sepolia |
 | USDC (Base Sepolia) | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
 

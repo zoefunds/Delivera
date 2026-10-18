@@ -46,13 +46,13 @@ private key before accepting funds.
 
 ```bash
 cd backend
-fly launch --no-deploy --copy-config --name delivera-api
+fly launch --no-deploy --copy-config --name delivera-api-v2
 fly postgres create --name delivera-db --region iad --initial-cluster-size 1 \
   --vm-size shared-cpu-1x --volume-size 3
-fly postgres attach delivera-db --app delivera-api        # sets DATABASE_URL
-fly storage create --name delivera-files --app delivera-api  # Tigris: sets AWS_* / BUCKET_NAME
+fly postgres attach delivera-db --app delivera-api-v2        # sets DATABASE_URL
+fly storage create --name delivera-files --app delivera-api-v2  # Tigris: sets AWS_* / BUCKET_NAME
 
-fly secrets set --app delivera-api \
+fly secrets set --app delivera-api-v2 \
   JWT_SECRET="$(openssl rand -hex 32)" \
   WALLET_MASTER_KEY="$(openssl rand -hex 32)" \
   REDIS_URL="rediss://default:<password>@<host>.upstash.io:6379" \
@@ -69,7 +69,7 @@ fly secrets set --app delivera-api \
   BASE_SEPOLIA_DECISION_AUTHORITY_PRIVATE_KEY="<attestation key>"
 
 fly deploy   # remote build; release runs prisma migrate deploy
-curl https://delivera-api.fly.dev/health
+curl https://delivera-api-v2.fly.dev/health
 ```
 
 ⚠️ `JWT_SECRET`/`WALLET_MASTER_KEY`: generate once and back them up. Rotating
@@ -80,7 +80,7 @@ curl https://delivera-api.fly.dev/health
 ```bash
 cd frontend
 vercel link
-vercel env add NEXT_PUBLIC_API_URL production   # https://delivera-api.fly.dev
+vercel env add NEXT_PUBLIC_API_URL production   # https://delivera-api-v2.fly.dev
 vercel --prod
 ```
 
@@ -88,7 +88,7 @@ Then update `APP_URL`/`CORS_ORIGINS` Fly secrets with the final Vercel domain an
 
 ## 5. Current verified deployments
 
-- GenLayer StudioNet adjudication contract: `0xB19331f411618Abb253a01Fa5b457D910c92D8F6`
+- GenLayer StudioNet adjudication contract: `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`
 - Base Sepolia escrow v2: `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 
@@ -99,8 +99,8 @@ record the source commit and deployment receipts.
 Whenever the contract is (re)deployed:
 
 ```bash
-fly secrets set --app delivera-api \
-  GENLAYER_CONTRACT_ADDRESS="0xB19331f411618Abb253a01Fa5b457D910c92D8F6" \
+fly secrets set --app delivera-api-v2 \
+  GENLAYER_CONTRACT_ADDRESS="0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa" \
   DELIVERA_ESCROW_ADDRESS="0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875"
 ```
 

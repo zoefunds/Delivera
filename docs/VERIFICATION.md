@@ -6,21 +6,21 @@ Date: 2026-10-18 (Africa/Lagos)
 
 - Funded live-run source commit: `d9d94c0b5b16edcc4982875f89dd53542b658e92`
 - Latest remediated source commit: `6cffd60` (adds the post-arbitration re-dispute guard and automated recovery/funding-claim regressions)
-- GenLayer StudioNet contract: `0xB19331f411618Abb253a01Fa5b457D910c92D8F6`
-- GenLayer deployment transaction: `0x79b954dd00da88b3f42028ed23e5f96bdf58d1c6ffeeb188a46df411f054dfc7`
+- Current GenLayer StudioNet contract: `0xDa4B86C86010329dbf484a1ccD1BD64396B25cBa`
+- Current GenLayer deployment transaction: `0x1690d4f69ee49e842b6f4eeab5fc04a5a8cebfce48401f3cc29354f5615a8190`
+- Historical funded-run GenLayer contract: `0xB19331f411618Abb253a01Fa5b457D910c92D8F6`
+- Historical deployment transaction: `0x79b954dd00da88b3f42028ed23e5f96bdf58d1c6ffeeb188a46df411f054dfc7`
 - Base Sepolia escrow v2: `0xC7A0AC77AE3058D0a1A8E3874C8e394D0E4a7875`
 - Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 - Client and decision authority: `0x7401c129EDfc26E68FE19309fE461eb3Db1058Eb`
 - Configured relayer (restored after the run): `0xd07E3D1bAF59F1c09e2F8842786D89B716915f3E`
 
-The funded evidence deployment receipt reached `FINALIZED` (`status: 7`) with
-`MAJORITY_AGREE` and unanimous revealed votes. The Base deployment was compiled
-from the funded live-run source commit above. Commit `6cffd60` changes only the
-GenLayer dispute-entry guard, backend testability/comments, frontend dispute
-button eligibility, CI, and documentation; it does not change the deployed Base
-escrow bytecode. A replacement StudioNet deployment requires the encrypted
-`anchor-deploy` keystore password, which is intentionally not stored in this
-repository.
+The current deployment reached `FINALIZED` (`status: 7`) with `MAJORITY_AGREE`;
+three validators agreed and two became idle after quorum. Its authoritative
+`get_platform_stats` read returned owner `0x7401…58Eb`, threshold 70, maximum
+attempts 3, and zero initial agreements. The Base escrow bytecode is unchanged.
+The prior address remains below only because it is the source of the already
+completed funded cross-chain evidence run.
 
 ## Reproducible checks
 
@@ -54,6 +54,58 @@ account is locked due to a billing issue.` This is an account-level runner
 block, not a test failure; GitHub produced no job log. The commands and
 observed local results above are the current reproducible evidence until the
 repository owner's Actions billing lock is cleared and the workflow is rerun.
+
+## Sequential production application E2E — 2026-10-18
+
+Each section was exercised separately against
+`https://delivera-frontend.vercel.app` and the production API, without parallel
+mutation or placeholder agreement content.
+
+1. **Homepage:** loaded with HTTP/visual success, all navigation targets and
+   architecture sections present. The test found and removed two overstatements
+   (server-independent settlement and instant payout); production now describes
+   the authority bridge and normal 30-second relay explicitly.
+2. **Authentication:** the real deployment wallet requested a one-time nonce,
+   signed the exact SIWE-style message, verified it, and fetched `/auth/me`.
+   Nonce, verify, and authenticated identity reads each returned HTTP 200.
+3. **Dashboard:** authenticated `/contracts` and `/projects` returned HTTP 200;
+   six existing agreements and zero projects were rendered from production data.
+4. **New agreement:** current StudioNet transaction
+   `0x71ecbbed9384bcdf0e40507457fb075bbd3ed759d9946d6c76443937edab45d9`
+   finalized successfully and created `delivera-1`: “Delivera Production
+   Verification: Accessible Analytics Portal.” It contains three substantive
+   milestones for an accessible 12-week Lagos operations dashboard, a documented
+   anonymized shipment-status API, and a deployment/incident-response runbook,
+   allocated 0.5/0.6/0.7 ledger units. The authoritative readback exactly matched
+   the supplied titles, descriptions, acceptance criteria, evidence types,
+   parties, and 1.8 total.
+5. **Contract detail/evaluations:** both endpoints returned HTTP 200 for real
+   production agreement `39368b31-98c1-46cb-954a-50fabfe048af`. This test exposed
+   stale backend state: PostgreSQL reported `FUNDED`, while the old configured
+   GenLayer contract returned `DRAFT`/zero funded, and the API advertised retired
+   escrow `0x6049…4383`.
+6. **Wallet:** the page's actual direct Base RPC path returned chain id `84532`
+   and 121,740,000 base units (121.740000 USDC) for `0x7401…58Eb`.
+7. **Notifications:** authenticated production retrieval returned HTTP 200 and
+   seven real records, including escrow-funded and contract-invited events with
+   persisted unread state and timestamps.
+
+The frontend production environment was repaired during this run:
+`NEXT_PUBLIC_API_URL` had been empty and is now
+`https://delivera-api-v2.fly.dev`; `NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS` is the
+current address above. Final Vercel deployment `dpl_AezKKqRRsnUQWkkPzKmmj3CvbVwK`
+completed `READY` and was aliased to the public domain.
+
+### Production backend configuration blocker
+
+The Fly apps `delivera-api` and `delivera-api-v2` are owned by a different Fly
+account from the currently authenticated CLI account (`gideon820001@gmail.com`).
+Consequently their secrets could not be switched during this run. The backend
+must set `GENLAYER_CONTRACT_ADDRESS=0xDa4B…5cBa` and
+`DELIVERA_ESCROW_ADDRESS=0xC7A0…7875`, then redeploy, before the new agreement can
+be mirrored or funded through the application. Until that account-level change,
+the public frontend is correctly configured but contract confirmation/detail
+reads remain split across new frontend and old backend deployments.
 
 ## Funded StudioNet to Base Sepolia demonstration
 

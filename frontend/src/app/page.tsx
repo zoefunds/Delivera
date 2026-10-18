@@ -20,13 +20,13 @@ const steps = [
     n: "03",
     icon: "psychology",
     title: "Validators verify independently",
-    body: "Multiple GenLayer validators each fetch the evidence themselves and run their own AI evaluation against the criteria. No single party — not even our servers — decides.",
+    body: "Multiple GenLayer validators each fetch the evidence themselves and run their own AI evaluation against the criteria. The current testnet bridge then uses a disclosed platform authority to attest that finalized result for Base Sepolia settlement.",
   },
   {
     n: "04",
     icon: "payments",
     title: "Funds release on consensus",
-    body: "When validator consensus approves, funds move instantly to the provider. Rejections allow resubmission; disagreements go to AI arbitration with split settlements.",
+    body: "When validator consensus approves and finalizes, the relay normally settles the provider on Base Sepolia within 30 seconds. Rejections allow resubmission; disagreements go to AI arbitration with split settlements.",
   },
 ];
 

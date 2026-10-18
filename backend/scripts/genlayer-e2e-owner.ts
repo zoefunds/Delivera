@@ -23,10 +23,12 @@ const normalizedKey = (key.startsWith("0x") ? key : `0x${key}`) as `0x${string}`
 const method = process.env.E2E_METHOD;
 const args = JSON.parse(process.env.E2E_ARGS || "[]") as CalldataEncodable[];
 if (!method) throw new Error("E2E_METHOD is required");
+const contractAddress = process.env.E2E_CONTRACT_ADDRESS;
+if (!contractAddress) throw new Error("E2E_CONTRACT_ADDRESS is required");
 
 const client = createClient({ chain: studionet, account: createAccount(normalizedKey) });
 const hash = await client.writeContract({
-  address: "0xB19331f411618Abb253a01Fa5b457D910c92D8F6" as Address,
+  address: contractAddress as Address,
   functionName: method,
   args,
   value: 0n,
